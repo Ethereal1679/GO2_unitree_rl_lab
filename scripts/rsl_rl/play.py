@@ -8,7 +8,6 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-from importlib.metadata import version
 
 from isaaclab.app import AppLauncher
 
@@ -155,8 +154,6 @@ def main():
 
     # reset environment
     obs = env.get_observations()
-    if version("rsl-rl-lib").startswith("2.3."):
-        obs, _ = env.get_observations()
     timestep = 0
     # simulate environment
     while simulation_app.is_running():
