@@ -12,7 +12,7 @@ class RslRlPpoActorCriticVAECfg(RslRlPpoActorCriticCfg):
     """Actor-critic configuration with a VAE-compressed height map."""
 
     class_name: str = "ActorCriticVAE"
-    height_map_obs_group: str = "critic"
+    height_map_obs_group: str = "policy"
     height_map_dim: int = 187  # 1.6 x 1.0 m grid at 0.1 m resolution -> 17 x 11
     height_map_start_index: int | None = None  # None selects the final height_map_dim values
     latent_dim: int = 16

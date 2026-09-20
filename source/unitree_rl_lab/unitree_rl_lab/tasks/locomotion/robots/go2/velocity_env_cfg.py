@@ -99,6 +99,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
     #   16  -> (x= 0.8, y=-0.5)
     #   17  -> (x=-0.8, y=-0.4)
     #   186 -> (x= 0.8, y= 0.5)
+
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
         offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)), #为了让 ray 起点位于高处，不参与最终 height scan 数值
@@ -240,6 +241,11 @@ class ObservationsCfg:
             func=mdp.joint_vel_rel, scale=0.05, clip=(-100, 100), noise=Unoise(n_min=-1.5, n_max=1.5)
         )
         last_action = ObsTerm(func=mdp.last_action, clip=(-100, 100))
+        height_scanner = ObsTerm(
+            func=mdp.height_scan_with_delay,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner"), "max_delay_frames": 2},
+            clip=(-1.0, 5.0),
+        )
 
         def __post_init__(self):
             # self.history_length = 5
@@ -403,7 +409,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
         self.scene.contact_forces.update_period = self.sim.dt
-        self.scene.height_scanner.update_period = self.decimation * self.sim.dt * 5.0
+        self.scene.height_scanner.update_period = 1 / 10.0 #self.decimation * self.sim.dt * 5.0
 
         # check if terrain levels curriculum is enabled - if so, enable curriculum for terrain generator
         # this generates terrains with increasing difficulty and is useful for training

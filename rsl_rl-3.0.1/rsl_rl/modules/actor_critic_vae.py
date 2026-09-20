@@ -120,8 +120,11 @@ class HeightMapActor(nn.Module):
 class ActorCriticVAE(nn.Module):
     """Actor-critic with a beta-VAE height-map encoder in the actor.
 
-    The raw actor input is ``[policy observations, height map]``. ``HeightMapActor``
-    replaces the height map with its latent mean before running the action MLP.
+    The raw actor input is ``[policy observations without the height map, height map]``.
+    ``HeightMapActor`` replaces the height map with its latent mean before running
+    the action MLP. When ``height_map_obs_group`` is ``"policy"``, the height map
+    is removed from the policy observation before it is appended to the actor input,
+    avoiding a duplicate copy of the scan.
     The critic continues to receive the configured critic observation groups.
     """
 
@@ -139,7 +142,7 @@ class ActorCriticVAE(nn.Module):
         activation="elu",
         init_noise_std=1.0,
         noise_std_type: str = "scalar",
-        height_map_obs_group: str = "critic",
+        height_map_obs_group: str = "policy",
         height_map_dim: int | None = 187,
         height_map_start_index: int | None = None,
         latent_dim: int = 16,
@@ -193,15 +196,33 @@ class ActorCriticVAE(nn.Module):
         for obs_group in obs_groups["policy"]:
             assert len(obs[obs_group].shape) == 2, "ActorCriticVAE only supports 1D observations."
             num_policy_obs += obs[obs_group].shape[-1]
+
+        # If the height map comes from a policy observation group, remove it from
+        # the ordinary actor features and append it back as the VAE input below.
+        self.height_map_in_policy = height_map_obs_group in obs_groups["policy"]
+        self.height_map_policy_start_index = None
+        if self.height_map_in_policy:
+            group_offset = 0
+            for obs_group in obs_groups["policy"]:
+                if obs_group == height_map_obs_group:
+                    self.height_map_policy_start_index = group_offset + self.height_map_start_index
+                    break
+                group_offset += obs[obs_group].shape[-1]
+            assert self.height_map_policy_start_index is not None
+            num_actor_policy_obs = num_policy_obs - self.height_map_dim
+        else:
+            num_actor_policy_obs = num_policy_obs
+
         num_critic_obs = 0
         for obs_group in obs_groups["critic"]:
             assert len(obs[obs_group].shape) == 2, "ActorCriticVAE only supports 1D observations."
             num_critic_obs += obs[obs_group].shape[-1]
 
-        # The exported actor receives policy observations followed by the raw height map.
-        num_raw_actor_obs = num_policy_obs + self.height_map_dim
+        # The exported actor receives policy observations (without the raw height
+        # map) followed by the raw height map for the VAE encoder.
+        num_raw_actor_obs = num_actor_policy_obs + self.height_map_dim
         self.actor = HeightMapActor(
-            num_policy_obs,
+            num_actor_policy_obs,
             self.height_map_dim,
             latent_dim,
             num_actions,
@@ -214,7 +235,7 @@ class ActorCriticVAE(nn.Module):
             EmpiricalNormalization(num_raw_actor_obs) if actor_obs_normalization else nn.Identity()
         )
         print(f"Height-map VAE: {self.actor.vae}")
-        print(f"Actor MLP ({num_policy_obs} policy + {latent_dim} latent inputs): {self.actor.policy}")
+        print(f"Actor MLP ({num_actor_policy_obs} policy + {latent_dim} latent inputs): {self.actor.policy}")
 
         self.critic = MLP(num_critic_obs, 1, list(critic_hidden_dims), activation)
         self.critic_obs_normalization = critic_obs_normalization
@@ -284,9 +305,12 @@ class ActorCriticVAE(nn.Module):
         return self.actor.get_latent(height_map, sample=sample)
 
     def get_actor_obs(self, obs):
-        obs_list = [obs[obs_group] for obs_group in self.obs_groups["policy"]]
-        obs_list.append(self.get_height_map(obs))
-        return torch.cat(obs_list, dim=-1)
+        policy_obs = torch.cat([obs[obs_group] for obs_group in self.obs_groups["policy"]], dim=-1)
+        if self.height_map_in_policy:
+            start = self.height_map_policy_start_index
+            end = start + self.height_map_dim
+            policy_obs = torch.cat((policy_obs[..., :start], policy_obs[..., end:]), dim=-1)
+        return torch.cat((policy_obs, self.get_height_map(obs)), dim=-1)
 
     def get_critic_obs(self, obs):
         return torch.cat([obs[obs_group] for obs_group in self.obs_groups["critic"]], dim=-1)
