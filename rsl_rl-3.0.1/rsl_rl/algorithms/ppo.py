@@ -179,6 +179,7 @@ class PPO:
         mean_value_loss = 0
         mean_surrogate_loss = 0
         mean_entropy = 0
+        mean_auxiliary_losses = {}
         # -- RND loss
         if self.rnd:
             mean_rnd_loss = 0
@@ -314,6 +315,14 @@ class PPO:
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
 
+            # Optional policy-specific auxiliary loss (e.g. height-map VAE reconstruction + KL).
+            auxiliary_loss_terms = {}
+            if hasattr(self.policy, "compute_auxiliary_loss"):
+                auxiliary_loss, auxiliary_loss_terms = self.policy.compute_auxiliary_loss(
+                    obs_batch[:original_batch_size]
+                )
+                loss += auxiliary_loss
+
             # Symmetry loss
             if self.symmetry:
                 # obtain the symmetric actions
@@ -387,6 +396,8 @@ class PPO:
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()
             mean_entropy += entropy_batch.mean().item()
+            for name, value in auxiliary_loss_terms.items():
+                mean_auxiliary_losses[name] = mean_auxiliary_losses.get(name, 0.0) + value.item()
             # -- RND loss
             if mean_rnd_loss is not None:
                 mean_rnd_loss += rnd_loss.item()
@@ -399,6 +410,8 @@ class PPO:
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
         mean_entropy /= num_updates
+        for name in mean_auxiliary_losses:
+            mean_auxiliary_losses[name] /= num_updates
         # -- For RND
         if mean_rnd_loss is not None:
             mean_rnd_loss /= num_updates
@@ -418,6 +431,7 @@ class PPO:
             loss_dict["rnd"] = mean_rnd_loss
         if self.symmetry:
             loss_dict["symmetry"] = mean_symmetry_loss
+        loss_dict.update(mean_auxiliary_losses)
 
         return loss_dict
 

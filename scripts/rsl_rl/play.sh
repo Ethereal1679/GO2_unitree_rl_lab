@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-RUN_NAME="2026-08-04_23-34-42_rough_terrain_4096_envs"
+RUN_NAME="2026-09-20_03-04-48_go2_lidar-hello_world"
 
 python "${SCRIPT_DIR}/play.py" \
-    --task g1_amp \
-    --num_envs 256 \
-    --seed 114514 \
+    --task go2_lidar \
+    --num_envs 32 \
     --load_run "${RUN_NAME}"

@@ -93,11 +93,21 @@ class RobotSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = ROBOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
     # sensors
+    # index = iy * 17 + ix
+    #   0   -> (x=-0.8, y=-0.5)
+    #   1   -> (x=-0.7, y=-0.5)
+    #   16  -> (x= 0.8, y=-0.5)
+    #   17  -> (x=-0.8, y=-0.4)
+    #   186 -> (x= 0.8, y= 0.5)
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)), #为了让 ray 起点位于高处，不参与最终 height scan 数值
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+        pattern_cfg=patterns.GridPatternCfg(
+            resolution=0.1,
+            size=[1.6, 1.0],
+            ordering="xy",
+        ),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
     )
@@ -393,7 +403,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
         self.scene.contact_forces.update_period = self.sim.dt
-        self.scene.height_scanner.update_period = self.decimation * self.sim.dt
+        self.scene.height_scanner.update_period = self.decimation * self.sim.dt * 5.0
 
         # check if terrain levels curriculum is enabled - if so, enable curriculum for terrain generator
         # this generates terrains with increasing difficulty and is useful for training
@@ -412,4 +422,5 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.scene.num_envs = 32
         self.scene.terrain.terrain_generator.num_rows = 2
         self.scene.terrain.terrain_generator.num_cols = 1
+        self.scene.height_scanner.debug_vis = True # 开启调试可视化
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges

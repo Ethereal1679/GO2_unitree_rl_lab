@@ -73,3 +73,6 @@ datasets
 
 # Mimic
 *.npz
+
+# elevation map
+# **/zelevation_mapping_cupy/*
