@@ -14,11 +14,12 @@
 // ROS
 #include <ros/package.h>
 
+#include <cmath>
 #include <utility>
 
 namespace elevation_mapping_cupy {
 
-ElevationMappingWrapper::ElevationMappingWrapper() {}
+ElevationMappingWrapper::ElevationMappingWrapper() : height_scan_n_(0) {}
 
 void ElevationMappingWrapper::initialize(ros::NodeHandle& nh) {
   // Add the elevation_mapping_cupy path to sys.path
@@ -165,6 +166,12 @@ void ElevationMappingWrapper::setParameters(ros::NodeHandle& nh) {
   resolution_ = py::cast<float>(param_.attr("get_value")("resolution"));
   map_length_ = py::cast<float>(param_.attr("get_value")("true_map_length"));
   map_n_ = py::cast<int>(param_.attr("get_value")("true_cell_n"));
+  const double heightScanSizeX = py::cast<float>(param_.attr("get_value")("height_scan_size_x"));
+  const double heightScanSizeY = py::cast<float>(param_.attr("get_value")("height_scan_size_y"));
+  const double heightScanResolution = py::cast<float>(param_.attr("get_value")("height_scan_resolution"));
+  const int heightScanNumX = static_cast<int>(std::round(heightScanSizeX / heightScanResolution)) + 1;
+  const int heightScanNumY = static_cast<int>(std::round(heightScanSizeY / heightScanResolution)) + 1;
+  height_scan_n_ = heightScanNumX * heightScanNumY;
 
   nh.param<bool>("enable_normal", enable_normal_, false);
   nh.param<bool>("enable_normal_color", enable_normal_color_, false);
@@ -208,6 +215,12 @@ void ElevationMappingWrapper::get_layer_data(const std::string& layerName, RowMa
   py::gil_scoped_acquire acquire;
   map = RowMatrixXf(map_n_, map_n_);
   map_.attr("get_map_with_name_ref")(layerName, Eigen::Ref<RowMatrixXf>(map));
+}
+
+void ElevationMappingWrapper::get_height_scan(const Eigen::Vector3d& position, double yaw, RowMatrixXf& scan) {
+  py::gil_scoped_acquire acquire;
+  scan = RowMatrixXf(1, height_scan_n_);
+  map_.attr("get_height_scan_ref")(position, yaw, Eigen::Ref<RowMatrixXf>(scan));
 }
 
 void ElevationMappingWrapper::get_grid_map(grid_map::GridMap& gridMap, const std::vector<std::string>& requestLayerNames) {

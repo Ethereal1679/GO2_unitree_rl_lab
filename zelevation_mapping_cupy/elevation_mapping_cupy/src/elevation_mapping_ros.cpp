@@ -18,6 +18,8 @@
 
 #include <elevation_map_msgs/Statistics.h>
 
+#include <cmath>
+
 namespace elevation_mapping_cupy {
 
 ElevationMappingNode::ElevationMappingNode(ros::NodeHandle& nh)
@@ -28,6 +30,8 @@ ElevationMappingNode::ElevationMappingNode(ros::NodeHandle& nh)
       orientationError_(0),
       positionAlpha_(0.1),
       orientationAlpha_(0.1),
+      heightScanNumX_(0),
+      heightScanNumY_(0),
       enablePointCloudPublishing_(false),
       isGridmapUpdated_(false) {
   nh_ = nh;
@@ -37,6 +41,7 @@ ElevationMappingNode::ElevationMappingNode(ros::NodeHandle& nh)
   XmlRpc::XmlRpcValue subscribers;
   std::vector<std::string> map_topics;
   double recordableFps, updateVarianceFps, timeInterval, updatePoseFps, updateGridMapFps, publishStatisticsFps;
+  double heightScanSizeX, heightScanSizeY, heightScanResolution;
   bool enablePointCloudPublishing(false);
 
   // Read parameters
@@ -64,6 +69,9 @@ ElevationMappingNode::ElevationMappingNode(ros::NodeHandle& nh)
   nh.param<double>("initialize_tf_grid_size", initializeTfGridSize_, 0.5);
   nh.param<double>("map_acquire_fps", updateGridMapFps, 5.0);
   nh.param<double>("publish_statistics_fps", publishStatisticsFps, 1.0);
+  nh.param<double>("height_scan_size_x", heightScanSizeX, 1.6);
+  nh.param<double>("height_scan_size_y", heightScanSizeY, 1.0);
+  nh.param<double>("height_scan_resolution", heightScanResolution, 0.1);
   nh.param<bool>("enable_pointcloud_publishing", enablePointCloudPublishing, false);
   nh.param<bool>("enable_normal_arrow_publishing", enableNormalArrowPublishing_, false);
   nh.param<bool>("enable_drift_corrected_TF_publishing", enableDriftCorrectedTFPublishing_, false);
@@ -71,6 +79,8 @@ ElevationMappingNode::ElevationMappingNode(ros::NodeHandle& nh)
   nh.param<bool>("always_clear_with_initializer", alwaysClearWithInitializer_, false);
 
   enablePointCloudPublishing_ = enablePointCloudPublishing;
+  heightScanNumX_ = static_cast<int>(std::round(heightScanSizeX / heightScanResolution)) + 1;
+  heightScanNumY_ = static_cast<int>(std::round(heightScanSizeY / heightScanResolution)) + 1;
 
   // Iterate all the subscribers
   // here we have to remove all the stuff
@@ -196,6 +206,7 @@ ElevationMappingNode::ElevationMappingNode(ros::NodeHandle& nh)
   alivePub_ = nh_.advertise<std_msgs::Empty>("alive", 1);
   normalPub_ = nh_.advertise<visualization_msgs::MarkerArray>("normal", 1);
   statisticsPub_ = nh_.advertise<elevation_map_msgs::Statistics>("statistics", 1);
+  heightScanPub_ = nh_.advertise<std_msgs::Float32MultiArray>("height_scan", 1);
 
   gridMap_.setFrameId(mapFrameId_);
   rawSubmapService_ = nh_.advertiseService("get_raw_submap", &ElevationMappingNode::getSubmap, this);
@@ -480,6 +491,21 @@ void ElevationMappingNode::updatePose(const ros::TimerEvent&) {
   // This is to check if the robot is moving. If the robot is not moving, drift compensation is disabled to avoid creating artifacts.
   Eigen::Vector3d position(transformTf.getOrigin().x(), transformTf.getOrigin().y(), transformTf.getOrigin().z());
   map_.move_to(position, transformationBaseToMap.rotation().transpose());
+
+  // IsaacLab uses GridPatternCfg(ordering="xy") and ray_alignment="yaw".
+  ElevationMappingWrapper::RowMatrixXf heightScan;
+  map_.get_height_scan(position, tf::getYaw(transformTf.getRotation()), heightScan);
+  std_msgs::Float32MultiArray heightScanMsg;
+  heightScanMsg.layout.dim.resize(2);
+  heightScanMsg.layout.dim[0].label = "y";
+  heightScanMsg.layout.dim[0].size = heightScanNumY_;
+  heightScanMsg.layout.dim[0].stride = heightScanNumX_ * heightScanNumY_;
+  heightScanMsg.layout.dim[1].label = "x";
+  heightScanMsg.layout.dim[1].size = heightScanNumX_;
+  heightScanMsg.layout.dim[1].stride = heightScanNumX_;
+  heightScanMsg.data.assign(heightScan.data(), heightScan.data() + heightScan.size());
+  heightScanPub_.publish(heightScanMsg);
+
   Eigen::Vector3d position3(transformTf.getOrigin().x(), transformTf.getOrigin().y(), transformTf.getOrigin().z());
   Eigen::Vector4d orientation(transformTf.getRotation().x(), transformTf.getRotation().y(), transformTf.getRotation().z(),
                               transformTf.getRotation().w());

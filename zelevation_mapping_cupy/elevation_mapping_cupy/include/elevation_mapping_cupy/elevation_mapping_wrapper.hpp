@@ -56,6 +56,7 @@ class ElevationMappingWrapper {
   void update_time();
   bool exists_layer(const std::string& layerName);
   void get_layer_data(const std::string& layerName, RowMatrixXf& map);
+  void get_height_scan(const Eigen::Vector3d& position, double yaw, RowMatrixXf& scan);
   void get_grid_map(grid_map::GridMap& gridMap, const std::vector<std::string>& layerNames);
   void get_polygon_traversability(std::vector<Eigen::Vector2d>& polygon, Eigen::Vector3d& result,
                                   std::vector<Eigen::Vector2d>& untraversable_polygon);
@@ -70,6 +71,7 @@ class ElevationMappingWrapper {
   double resolution_;
   double map_length_;
   int map_n_;
+  int height_scan_n_;
   bool enable_normal_;
   bool enable_normal_color_;
 };

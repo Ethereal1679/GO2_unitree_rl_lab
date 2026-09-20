@@ -98,6 +98,14 @@ class ElevationMapWrapper:
     def register_publishers(self):
         self._publishers = {}
         self._publishers_timers = []
+        self._height_scan_publisher = rospy.Publisher(
+            f"/{self.node_name}/height_scan", Float32MultiArray, queue_size=10
+        )
+        self._height_scan_layout = MAL()
+        num_x = int(round(self.param.height_scan_size_x / self.param.height_scan_resolution)) + 1
+        num_y = int(round(self.param.height_scan_size_y / self.param.height_scan_resolution)) + 1
+        self._height_scan_layout.dim.append(MAD(label="y", size=num_y, stride=num_x * num_y))
+        self._height_scan_layout.dim.append(MAD(label="x", size=num_x, stride=num_x))
         for k, v in self.publishers.items():
             self._publishers[k] = rospy.Publisher(f"/{self.node_name}/{k}", GridMap, queue_size=10)
             # partial(.) allows to pass a default argument to a callback
@@ -231,6 +239,14 @@ class ElevationMapWrapper:
         rot = quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3]
         self._map.move_to(trans, rot)
 
+        # Match IsaacLab's GridPatternCfg(ordering="xy") and ray_alignment="yaw".
+        yaw = np.arctan2(rot[1, 0], rot[0, 0])
+        height_scan = self._map.get_height_scan(trans, yaw)
+        height_scan_msg = Float32MultiArray()
+        height_scan_msg.layout = self._height_scan_layout
+        height_scan_msg.data = np.asarray(height_scan.get(), dtype=np.float32).tolist()
+        self._height_scan_publisher.publish(height_scan_msg)
+
         self._map_t = t
         self._map_q = q
 
@@ -271,6 +287,21 @@ class ElevationMapWrapper:
         self.initialize_tf_grid_size = rospy.get_param("~initialize_tf_grid_size", 0.5)
         self.map_acquire_fps = rospy.get_param("~map_acquire_fps", 5.0)
         self.publish_statistics_fps = rospy.get_param("~publish_statistics_fps", 1.0)
+        self.param.height_scan_size_x = rospy.get_param("~height_scan_size_x", self.param.height_scan_size_x)
+        self.param.height_scan_size_y = rospy.get_param("~height_scan_size_y", self.param.height_scan_size_y)
+        self.param.height_scan_resolution = rospy.get_param(
+            "~height_scan_resolution", self.param.height_scan_resolution
+        )
+        self.param.height_scan_offset = rospy.get_param("~height_scan_offset", self.param.height_scan_offset)
+        self.param.height_scan_clip_min = rospy.get_param(
+            "~height_scan_clip_min", self.param.height_scan_clip_min
+        )
+        self.param.height_scan_clip_max = rospy.get_param(
+            "~height_scan_clip_max", self.param.height_scan_clip_max
+        )
+        self.param.height_scan_invalid_value = rospy.get_param(
+            "~height_scan_invalid_value", self.param.height_scan_invalid_value
+        )
         self.enable_pointcloud_publishing = rospy.get_param("~enable_pointcloud_publishing", False)
         self.enable_normal_arrow_publishing = rospy.get_param("~enable_normal_arrow_publishing", False)
         self.enable_drift_corrected_TF_publishing = rospy.get_param("~enable_drift_corrected_TF_publishing", False)

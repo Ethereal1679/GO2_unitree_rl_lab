@@ -163,6 +163,17 @@ class Parameter(Serializable):
     average_weight: float = 0.5  # weight for the average fusion
 
     map_length: float = 8.0  # map's size in m.
+
+    # IsaacLab-compatible local height scan. The generated points use
+    # ordering="xy": y is the outer dimension and x is the inner dimension.
+    height_scan_size_x: float = 1.6
+    height_scan_size_y: float = 1.0
+    height_scan_resolution: float = 0.1
+    height_scan_offset: float = 0.5
+    height_scan_clip_min: float = -1.0
+    height_scan_clip_max: float = 5.0
+    height_scan_invalid_value: float = 5.0
+
     sensor_noise_factor: float = 0.05  # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
     mahalanobis_thresh: float = 2.0  # points outside this distance is outlier.
     outlier_variance: float = 0.01  # if point is outlier, add this value to the cell.

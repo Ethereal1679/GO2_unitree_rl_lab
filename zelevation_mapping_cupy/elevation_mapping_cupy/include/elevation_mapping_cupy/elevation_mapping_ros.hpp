@@ -26,9 +26,11 @@
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <std_msgs/Float32MultiArray.h>
 #include <std_srvs/Empty.h>
 #include <std_srvs/SetBool.h>
 #include <tf/transform_broadcaster.h>
+#include <tf/transform_datatypes.h>
 #include <tf/transform_listener.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
@@ -131,6 +133,7 @@ class ElevationMappingNode {
   ros::Publisher pointPub_;
   ros::Publisher normalPub_;
   ros::Publisher statisticsPub_;
+  ros::Publisher heightScanPub_;
   ros::ServiceServer rawSubmapService_;
   ros::ServiceServer clearMapService_;
   ros::ServiceServer clearMapWithInitializerService_;
@@ -177,6 +180,8 @@ class ElevationMappingNode {
 
   double positionAlpha_;
   double orientationAlpha_;
+  int heightScanNumX_;
+  int heightScanNumY_;
 
   double recordableFps_;
   std::atomic_bool enablePointCloudPublishing_;

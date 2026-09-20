@@ -604,6 +604,93 @@ class ElevationMap:
         """
         return self.process_map_for_publish(self.elevation_map[0], fill_nan=True, add_z=True)
 
+    def get_height_scan(
+        self,
+        base_position,
+        yaw,
+        size_x=None,
+        size_y=None,
+        resolution=None,
+        offset=None,
+        clip_min=None,
+        clip_max=None,
+        invalid_value=None,
+    ):
+        """Sample an IsaacLab-compatible local height scan from the elevation map.
+
+        The point layout is identical to IsaacLab's ``GridPatternCfg(ordering="xy")``:
+        ``x`` spans the inner dimension and ``y`` spans the outer dimension. For the
+        default configuration this returns 187 values in ``(11, 17)`` row-major order.
+
+        Args:
+            base_position: Base position ``[x, y, z]`` in the map frame.
+            yaw: Base yaw in the map frame. Roll and pitch are intentionally ignored,
+                matching IsaacLab's ``ray_alignment="yaw"``.
+            size_x: Scan length along local x, in meters.
+            size_y: Scan width along local y, in meters.
+            resolution: Scan point spacing, in meters.
+            offset: Value subtracted from ``base_z - terrain_z``.
+            clip_min: Minimum output value.
+            clip_max: Maximum output value.
+            invalid_value: Value used for cells without a valid elevation estimate.
+
+        Returns:
+            Cupy array with shape ``(num_y * num_x,)`` and IsaacLab ordering.
+        """
+        size_x = self.param.height_scan_size_x if size_x is None else size_x
+        size_y = self.param.height_scan_size_y if size_y is None else size_y
+        resolution = self.param.height_scan_resolution if resolution is None else resolution
+        offset = self.param.height_scan_offset if offset is None else offset
+        clip_min = self.param.height_scan_clip_min if clip_min is None else clip_min
+        clip_max = self.param.height_scan_clip_max if clip_max is None else clip_max
+        invalid_value = self.param.height_scan_invalid_value if invalid_value is None else invalid_value
+
+        if size_x <= 0.0 or size_y <= 0.0 or resolution <= 0.0:
+            raise ValueError("Height-scan sizes and resolution must be positive.")
+
+        num_x = int(round(size_x / resolution)) + 1
+        num_y = int(round(size_y / resolution)) + 1
+        if not np.isclose((num_x - 1) * resolution, size_x) or not np.isclose(
+            (num_y - 1) * resolution, size_y
+        ):
+            raise ValueError("Height-scan size must be an integer multiple of its resolution.")
+
+        # Equivalent to torch.meshgrid(x, y, indexing="xy") followed by
+        # flatten(): y is the outer loop and x is the inner loop.
+        x_local = cp.linspace(-size_x / 2.0, size_x / 2.0, num_x, dtype=self.data_type)
+        y_local = cp.linspace(-size_y / 2.0, size_y / 2.0, num_y, dtype=self.data_type)
+        grid_x, grid_y = cp.meshgrid(x_local, y_local, indexing="xy")
+
+        yaw = cp.asarray(yaw, dtype=self.data_type)
+        base_position = cp.asarray(base_position, dtype=self.data_type)
+        cos_yaw = cp.cos(yaw)
+        sin_yaw = cp.sin(yaw)
+
+        # Transform local scan points to the map frame using yaw only.
+        x_map = base_position[0] + cos_yaw * grid_x - sin_yaw * grid_y
+        y_map = base_position[1] + sin_yaw * grid_x + cos_yaw * grid_y
+
+        # The map kernels store samples as [x_index, y_index]. Keep this
+        # convention internally and only change the returned flatten order.
+        idx_x = ((x_map - self.center[0]) / self.resolution + 0.5 * self.cell_n).astype(cp.int32)
+        idx_y = ((y_map - self.center[1]) / self.resolution + 0.5 * self.cell_n).astype(cp.int32)
+        inside = (idx_x >= 1) & (idx_x < self.cell_n - 1) & (idx_y >= 1) & (idx_y < self.cell_n - 1)
+        idx_x = cp.clip(idx_x, 0, self.cell_n - 1)
+        idx_y = cp.clip(idx_y, 0, self.cell_n - 1)
+
+        with self.map_lock:
+            terrain_z = self.elevation_map[0, idx_x, idx_y] + self.center[2]
+            is_valid = self.elevation_map[2, idx_x, idx_y] > 0.5
+
+        # Same observation definition as IsaacLab's mdp.height_scan.
+        scan = base_position[2] - terrain_z - offset
+        scan = cp.where(inside & is_valid, scan, invalid_value)
+        return cp.clip(scan, clip_min, clip_max).reshape(-1)
+
+    def get_height_scan_ref(self, base_position, yaw, data):
+        """Copy an IsaacLab-compatible height scan into a CPU output buffer."""
+        self.copy_to_cpu(self.get_height_scan(base_position, yaw), data)
+
     def get_variance(self):
         """Get the variance layer.
 

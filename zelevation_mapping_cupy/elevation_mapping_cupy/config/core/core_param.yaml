@@ -1,6 +1,14 @@
 #### Basic parameters ########
 resolution: 0.04                                # resolution in m.
 map_length: 8.0                                 # map's size in m.
+# IsaacLab GridPatternCfg-compatible height scan (ordering="xy").
+height_scan_size_x: 1.6
+height_scan_size_y: 1.0
+height_scan_resolution: 0.1
+height_scan_offset: 0.5
+height_scan_clip_min: -1.0
+height_scan_clip_max: 5.0
+height_scan_invalid_value: 5.0
 sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
 mahalanobis_thresh: 2.0                         # points outside this distance is outlier.
 outlier_variance: 0.01                          # if point is outlier, add this value to the cell.
