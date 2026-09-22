@@ -95,8 +95,18 @@ class HeightMapActor(nn.Module):
         super().__init__()
         self.policy_obs_dim = policy_obs_dim
         self.height_map_dim = height_map_dim
+        # Isaac Lab's generic ONNX exporter obtains the observation dimension
+        # through ``actor[0].in_features``.  HeightMapActor is not a Sequential,
+        # so expose the raw actor-input dimension for exporter compatibility.
+        self.in_features = policy_obs_dim + height_map_dim
         self.vae = HeightMapVAE(height_map_dim, latent_dim, vae_hidden_dims, activation)
         self.policy = MLP(policy_obs_dim + latent_dim, num_actions, list(actor_hidden_dims), activation)
+
+    def __getitem__(self, index: int):
+        """Provide the input-size interface expected by Isaac Lab exporters."""
+        if index != 0:
+            raise IndexError(f"HeightMapActor only exposes exporter index 0, got {index}.")
+        return self
 
     def split_input(self, actor_input: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         expected_dim = self.policy_obs_dim + self.height_map_dim

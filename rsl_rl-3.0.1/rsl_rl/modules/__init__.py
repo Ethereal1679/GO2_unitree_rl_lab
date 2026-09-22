@@ -6,8 +6,10 @@
 """Definitions for neural-network components for RL-agents."""
 
 from .actor_critic import ActorCritic
+from .actor_critic_attention import AttentionMapActorCritic
 from .actor_critic_vae import ActorCriticVAE, HeightMapVAE
 from .actor_critic_recurrent import ActorCriticRecurrent
+from .attention_policy import AttentionMapActor, AttentionMapEncoder, Go2AttentionPolicy
 from .rnd import *
 from .student_teacher import StudentTeacher
 from .student_teacher_recurrent import StudentTeacherRecurrent
@@ -15,9 +17,13 @@ from .symmetry import *
 
 __all__ = [
     "ActorCritic",
+    "AttentionMapActorCritic",
+    "AttentionMapActor",
+    "AttentionMapEncoder",
     "ActorCriticVAE",
     "ActorCriticRecurrent",
     "HeightMapVAE",
+    "Go2AttentionPolicy",
     "StudentTeacher",
     "StudentTeacherRecurrent",
 ]

@@ -80,31 +80,42 @@ def export_deploy_cfg(env: ManagerBasedRLEnv, log_dir):
             cfg["actions"][action_name]["joint_ids"] = action_term._joint_ids
 
     # --- observations ---
-    obs_names = env.observation_manager.active_terms["policy"]
-    obs_cfgs = env.observation_manager._group_obs_term_cfgs["policy"]
-    obs_terms = zip(obs_names, obs_cfgs)
+    active_obs_groups = env.observation_manager.active_terms
+    if "policy" in active_obs_groups:
+        policy_obs_groups = ["policy"]
+    elif "proprioception" in active_obs_groups and "map_scans" in active_obs_groups:
+        policy_obs_groups = ["proprioception", "map_scans"]
+    else:
+        raise KeyError(
+            "Expected either a 'policy' observation group or the attention-policy groups "
+            "'proprioception' and 'map_scans'."
+        )
     cfg["observations"] = {}
-    for obs_name, obs_cfg in obs_terms:
-        obs_dims = tuple(obs_cfg.func(env, **obs_cfg.params).shape)
-        term_cfg = obs_cfg.copy()
-        if term_cfg.scale is not None:
-            scale = term_cfg.scale.detach().cpu().numpy().tolist()
-            if isinstance(scale, float):
-                term_cfg.scale = [scale for _ in range(obs_dims[1])]
+    for group_name in policy_obs_groups:
+        obs_names = active_obs_groups[group_name]
+        obs_cfgs = env.observation_manager._group_obs_term_cfgs[group_name]
+        for obs_name, obs_cfg in zip(obs_names, obs_cfgs):
+            obs_dims = tuple(obs_cfg.func(env, **obs_cfg.params).shape)
+            obs_dim = int(np.prod(obs_dims[1:]))
+            term_cfg = obs_cfg.copy()
+            if term_cfg.scale is not None:
+                scale = term_cfg.scale.detach().cpu().numpy().tolist()
+                if isinstance(scale, float):
+                    term_cfg.scale = [scale for _ in range(obs_dim)]
+                else:
+                    term_cfg.scale = np.asarray(scale).reshape(-1).tolist()
             else:
-                term_cfg.scale = scale
-        else:
-            term_cfg.scale = [1.0 for _ in range(obs_dims[1])]
-        if term_cfg.clip is not None:
-            term_cfg.clip = list(term_cfg.clip)
-        if term_cfg.history_length == 0:
-            term_cfg.history_length = 1
+                term_cfg.scale = [1.0 for _ in range(obs_dim)]
+            if term_cfg.clip is not None:
+                term_cfg.clip = list(term_cfg.clip)
+            if term_cfg.history_length == 0:
+                term_cfg.history_length = 1
 
-        # clean cfg
-        term_cfg = term_cfg.to_dict()
-        for _ in ["func", "modifiers", "noise", "flatten_history_dim"]:
-            del term_cfg[_]
-        cfg["observations"][obs_name] = term_cfg
+            # clean cfg
+            term_cfg = term_cfg.to_dict()
+            for _ in ["func", "modifiers", "noise", "flatten_history_dim"]:
+                del term_cfg[_]
+            cfg["observations"][obs_name] = term_cfg
 
     # --- save config file ---
     filename = os.path.join(log_dir, "params", "deploy.yaml")

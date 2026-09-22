@@ -12,6 +12,9 @@ import gymnasium as gym
 import pathlib
 import sys
 
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "rsl_rl-3.0.1"))
+
 sys.path.insert(0, f"{pathlib.Path(__file__).parent.parent}")
 from list_envs import import_packages  # noqa: F401
 

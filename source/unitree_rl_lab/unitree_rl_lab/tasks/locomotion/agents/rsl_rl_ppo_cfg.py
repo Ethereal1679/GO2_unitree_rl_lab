@@ -22,6 +22,18 @@ class RslRlPpoActorCriticVAECfg(RslRlPpoActorCriticCfg):
 
 
 @configclass
+class RslRlPpoAttentionActorCriticCfg(RslRlPpoActorCriticCfg):
+    """Actor-critic configuration for the Go2 map-attention policy."""
+
+    class_name: str = "AttentionMapActorCritic"
+    proprioception_obs_group: str = "proprioception"
+    map_scans_obs_group: str = "map_scans"
+    embedding_dim: int = 64
+    num_heads: int = 16
+    map_shape: tuple[int, int] = (26, 16)
+
+
+@configclass
 class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     obs_groups = {"policy": ["policy"], "critic": ["critic"]}
@@ -64,4 +76,22 @@ class Go2VAERunnerCfg(BasePPORunnerCfg):
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
         latent_dim=16,
+    )
+
+
+@configclass
+class Go2AttentionRunnerCfg(BasePPORunnerCfg):
+    """Go2 PPO runner using the height-map cross-attention actor."""
+
+    obs_groups = {"policy": ["proprioception", "map_scans"], "critic": ["critic"]}
+    policy = RslRlPpoAttentionActorCriticCfg(
+        init_noise_std=1.0,
+        actor_obs_normalization=False,
+        critic_obs_normalization=False,
+        actor_hidden_dims=[256, 128],
+        critic_hidden_dims=[512, 256, 128],
+        activation="elu",
+        embedding_dim=64,
+        num_heads=16,
+        map_shape=(26, 16),
     )

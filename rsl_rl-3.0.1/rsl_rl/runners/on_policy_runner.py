@@ -19,6 +19,7 @@ from rsl_rl.modules import (
     ActorCritic,
     ActorCriticRecurrent,
     ActorCriticVAE,
+    AttentionMapActorCritic,
     resolve_rnd_config,
     resolve_symmetry_config,
 )
@@ -422,9 +423,9 @@ class OnPolicyRunner:
 
         # initialize the actor-critic
         actor_critic_class = eval(self.policy_cfg.pop("class_name"))
-        actor_critic: ActorCritic | ActorCriticRecurrent | ActorCriticVAE = actor_critic_class(
-            obs, self.cfg["obs_groups"], self.env.num_actions, **self.policy_cfg
-        ).to(self.device)
+        actor_critic: ActorCritic | ActorCriticRecurrent | ActorCriticVAE | AttentionMapActorCritic = (
+            actor_critic_class(obs, self.cfg["obs_groups"], self.env.num_actions, **self.policy_cfg).to(self.device)
+        )
 
         # initialize the algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))

@@ -8,6 +8,11 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import pathlib
+import sys
+
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "rsl_rl-3.0.1"))
 
 from isaaclab.app import AppLauncher
 
@@ -45,6 +50,7 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import gymnasium as gym
+import copy
 import os
 import time
 import torch
@@ -61,6 +67,34 @@ from isaaclab_tasks.utils import get_checkpoint_path
 
 import unitree_rl_lab.tasks  # noqa: F401
 from unitree_rl_lab.utils.parser_cfg import parse_env_cfg
+
+
+class _NormalizedAttentionActor(torch.nn.Module):
+    """ONNX wrapper using an opset that supports MultiheadAttention."""
+
+    def __init__(self, actor, normalizer):
+        super().__init__()
+        self.actor = copy.deepcopy(actor)
+        self.normalizer = copy.deepcopy(normalizer) if normalizer is not None else torch.nn.Identity()
+
+    def forward(self, observations):
+        return self.actor(self.normalizer(observations))
+
+
+def export_attention_policy_as_onnx(policy, normalizer, path, filename="policy.onnx"):
+    os.makedirs(path, exist_ok=True)
+    exporter = _NormalizedAttentionActor(policy.actor, normalizer).cpu().eval()
+    observations = torch.zeros(1, exporter.actor[0].in_features)
+    torch.onnx.export(
+        exporter,
+        observations,
+        os.path.join(path, filename),
+        export_params=True,
+        opset_version=17,
+        input_names=["obs"],
+        output_names=["actions"],
+        dynamic_axes={},
+    )
 
 
 def main():
@@ -148,7 +182,10 @@ def main():
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
     export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
-    export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
+    if policy_nn.__class__.__name__ == "AttentionMapActorCritic":
+        export_attention_policy_as_onnx(policy_nn, normalizer, export_model_dir, filename="policy.onnx")
+    else:
+        export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
 
     dt = env.unwrapped.step_dt
 

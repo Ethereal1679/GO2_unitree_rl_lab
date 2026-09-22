@@ -5,6 +5,11 @@ from typing import TYPE_CHECKING
 
 from isaaclab.envs import mdp as isaaclab_mdp
 
+try:
+    from isaaclab.utils.math import quat_apply_inverse
+except ImportError:
+    from isaaclab.utils.math import quat_rotate_inverse as quat_apply_inverse
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
@@ -90,3 +95,57 @@ def height_scan_with_delay(
 
     env_ids = torch.arange(current_scan.shape[0], device=current_scan.device)
     return state["buffer"][state["delay_frames"], env_ids]
+
+
+def go2_proprioception(env: ManagerBasedRLEnv, command_name: str = "base_velocity") -> torch.Tensor:
+    """Return the Go2 proprioception vector in the attention-policy order.
+
+    The returned order is command (3), base linear/angular velocity (6),
+    projected gravity (3), relative joint position (12), relative joint
+    velocity (12), and previous action (12).
+    """
+
+    command = isaaclab_mdp.generated_commands(env, command_name=command_name)
+    base_lin_vel = isaaclab_mdp.base_lin_vel(env)
+    base_ang_vel = isaaclab_mdp.base_ang_vel(env)
+    projected_gravity = isaaclab_mdp.projected_gravity(env)
+    joint_pos_rel = isaaclab_mdp.joint_pos_rel(env)
+    joint_vel_rel = isaaclab_mdp.joint_vel_rel(env)
+    last_action = isaaclab_mdp.last_action(env)
+    proprioception = torch.cat(
+        (
+            command,
+            base_lin_vel,
+            base_ang_vel,
+            projected_gravity,
+            joint_pos_rel,
+            joint_vel_rel,
+            last_action,
+        ),
+        dim=-1,
+    )
+    if proprioception.shape[-1] != 48:
+        raise RuntimeError(f"Go2 proprioception must have 48 values, got {proprioception.shape[-1]}")
+    return proprioception
+
+
+def map_scan_points(
+    env: ManagerBasedRLEnv,
+    sensor_cfg,
+    asset_cfg,
+    grid_shape: tuple[int, int] = (26, 16),
+) -> torch.Tensor:
+    """Return ray-hit points in the robot base frame as ``[B, 26, 16, 3]``."""
+
+    sensor = env.scene.sensors[sensor_cfg.name]
+    asset = env.scene[asset_cfg.name]
+    ray_hits_w = sensor.data.ray_hits_w
+    relative_hits_w = ray_hits_w - asset.data.root_pos_w.unsqueeze(1)
+    root_quat_w = asset.data.root_quat_w.unsqueeze(1).expand(-1, ray_hits_w.shape[1], -1)
+    ray_hits_b = quat_apply_inverse(root_quat_w, relative_hits_w)
+    expected_points = grid_shape[0] * grid_shape[1]
+    if ray_hits_b.shape[1] != expected_points:
+        raise RuntimeError(
+            f"Expected {expected_points} map points for grid {grid_shape}, got {ray_hits_b.shape[1]}"
+        )
+    return ray_hits_b.reshape(ray_hits_b.shape[0], grid_shape[0], grid_shape[1], 3)
