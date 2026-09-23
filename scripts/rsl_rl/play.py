@@ -38,7 +38,13 @@ parser.add_argument(
     "--attention_weights",
     action="store_true",
     default=False,
-    help="Return and retain per-head map attention weights during inference.",
+    help="Deprecated compatibility flag; use --attention_enable_viz.",
+)
+parser.add_argument(
+    "--attention_enable_viz",
+    action="store_true",
+    default=False,
+    help="Color the existing height-scan markers from policy attention weights.",
 )
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -114,9 +120,8 @@ def main():
         entry_point_key="play_env_cfg_entry_point",
     )
     agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
-    if args_cli.attention_weights and hasattr(agent_cfg.policy, "return_attention_weights"):
-        agent_cfg.policy.return_attention_weights = True
-        print("[INFO] Per-head attention weights enabled for inference.")
+    if args_cli.attention_weights:
+        print("[WARNING] --attention_weights is deprecated; use --attention_enable_viz.")
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -188,6 +193,29 @@ def main():
     else:
         normalizer = None
 
+    # 引入attention权重可视化
+    attention_visualizer = None
+    attention_viz_enabled = False
+    if args_cli.attention_enable_viz and policy_nn.__class__.__name__ == "AttentionMapActorCritic":
+        from unitree_rl_lab.utils.attention_visualization import HeightScanAttentionVisualizer
+
+        attention_viz_cfg = getattr(agent_cfg.policy, "attention_visualization", None)
+        attention_viz_enabled = bool(getattr(attention_viz_cfg, "enabled", True))
+        if attention_viz_enabled:
+            attention_visualizer = HeightScanAttentionVisualizer(
+                env,
+                attention_viz_cfg,
+                env_id=0,
+            )
+            interval = max(1, int(getattr(attention_viz_cfg, "update_interval", 5)))
+            if attention_visualizer.marker_visualizer is None:
+                print("[WARNING] Existing RayCaster height-scan visualizer is unavailable; visualization disabled.")
+                attention_viz_enabled = False
+            else:
+                print(f"[INFO] Height-scan attention visualization enabled (env_id=0, interval={interval}).")
+    elif args_cli.attention_enable_viz:
+        print("[WARNING] --attention_enable_viz requires the AttentionMapActorCritic policy; visualization disabled.")
+
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
     export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
@@ -201,15 +229,32 @@ def main():
     # reset environment
     obs = env.get_observations()
     timestep = 0
+    attention_step = 0
     # simulate environment
+    with torch.inference_mode():
+        if attention_viz_enabled:
+            policy_output = policy(obs, return_attention=True)
+            actions = policy_output["actions"]
+            attention_visualizer.update(policy_output["attention_weights"], obs["map_scans"])
+        else:
+            actions = policy(obs)
+
     while simulation_app.is_running():
         start_time = time.time()
-        # run everything in inference mode
+        # env stepping
+        obs, _, _, _ = env.step(actions)
+        attention_step += 1
+
+        # Compute the next action. On update frames this same inference also
+        # supplies attention for the current height-scan marker positions.
         with torch.inference_mode():
-            # agent stepping
-            actions = policy(obs)
-            # env stepping
-            obs, _, _, _ = env.step(actions)
+            update_attention = attention_viz_enabled and attention_step % interval == 0
+            if update_attention:
+                policy_output = policy(obs, return_attention=True)
+                actions = policy_output["actions"]
+                attention_visualizer.update(policy_output["attention_weights"], obs["map_scans"])
+            else:
+                actions = policy(obs)
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

@@ -22,6 +22,19 @@ class RslRlPpoActorCriticVAECfg(RslRlPpoActorCriticCfg):
 
 
 @configclass
+class AttentionVisualizationCfg:
+    """Runtime options for attention coloring in the play script."""
+
+    enabled: bool = True
+    update_interval: int = 5
+    aggregation: str = "mean"
+    normalization: str = "percentile"
+    percentile_low: float = 5.0
+    percentile_high: float = 95.0
+    show_invalid_points: bool = False
+
+
+@configclass
 class RslRlPpoAttentionActorCriticCfg(RslRlPpoActorCriticCfg):
     """Actor-critic configuration for the Go2 map-attention policy."""
 
@@ -32,6 +45,7 @@ class RslRlPpoAttentionActorCriticCfg(RslRlPpoActorCriticCfg):
     num_heads: int = 16
     map_shape: tuple[int, int] = (26, 16)
     return_attention_weights: bool = False
+    attention_visualization: AttentionVisualizationCfg = AttentionVisualizationCfg()
 
 
 @configclass

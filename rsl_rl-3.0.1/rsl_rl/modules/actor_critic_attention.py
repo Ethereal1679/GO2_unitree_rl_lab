@@ -39,6 +39,7 @@ class AttentionMapActorCritic(nn.Module):
         num_heads: int = 16,
         map_shape: tuple[int, int] = (26, 16),
         return_attention_weights: bool = False,
+        attention_visualization=None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -115,8 +116,13 @@ class AttentionMapActorCritic(nn.Module):
     def reset(self, dones=None):
         pass
 
-    def forward(self):
-        raise NotImplementedError
+    def forward(self, obs, return_attention: bool = False):
+        """Run the actor and optionally return the map attention weights."""
+
+        actor_obs = self.actor_obs_normalizer(self.get_actor_obs(obs))
+        if return_attention:
+            return self.actor.forward_with_attention(actor_obs)
+        return self.actor(actor_obs)
 
     @property
     def action_mean(self):
@@ -151,9 +157,8 @@ class AttentionMapActorCritic(nn.Module):
         self.update_distribution(obs)
         return self.distribution.sample()
 
-    def act_inference(self, obs):
-        actor_obs = self.actor_obs_normalizer(self.get_actor_obs(obs))
-        return self.actor(actor_obs)
+    def act_inference(self, obs, return_attention: bool = False):
+        return self.forward(obs, return_attention=return_attention)
 
     @property
     def attention_weights(self):
