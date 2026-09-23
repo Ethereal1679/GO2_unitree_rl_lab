@@ -12,13 +12,11 @@ import gymnasium as gym
 import pathlib
 import sys
 
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "rsl_rl-3.0.1"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-sys.path.insert(0, f"{pathlib.Path(__file__).parent.parent}")
-from list_envs import import_packages  # noqa: F401
-
-sys.path.pop(0)
+from scripts.rsl_rl.py.list_envs import import_packages  # noqa: F401
 
 tasks = []
 for task_spec in gym.registry.values():
@@ -33,7 +31,7 @@ import argcomplete
 from isaaclab.app import AppLauncher
 
 # local imports
-import cli_args  # isort: skip
+import scripts.rsl_rl.py.cli_args as cli_args  # isort: skip
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")

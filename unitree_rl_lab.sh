@@ -24,7 +24,7 @@ _ut_rl_lab_python_argcomplete_wrapper() {
                     COMP_TYPE="$COMP_TYPE" \
                     _ARGCOMPLETE=1 \
                     _ARGCOMPLETE_SUPPRESS_SPACE=$SUPPRESS_SPACE \
-                    ${python_exe} ${UNITREE_RL_LAB_PATH}/scripts/rsl_rl/train.py 8>&1 9>&2 1>/dev/null 2>/dev/null) )
+                    ${python_exe} ${UNITREE_RL_LAB_PATH}/scripts/rsl_rl/py/train.py 8>&1 9>&2 1>/dev/null 2>/dev/null) )
 }
 complete -o nospace -F _ut_rl_lab_python_argcomplete_wrapper "./unitree_rl_lab.sh"
 
@@ -68,15 +68,15 @@ case "$1" in
         ;;
     -l|--list)
         shift
-        ${python_exe} ${UNITREE_RL_LAB_PATH}/scripts/list_envs.py "$@"
+        ${python_exe} ${UNITREE_RL_LAB_PATH}/scripts/rsl_rl/py/list_envs.py "$@"
         ;;
     -p|--play)
         shift
-        ${python_exe} ${UNITREE_RL_LAB_PATH}/scripts/rsl_rl/play.py "$@"
+        ${python_exe} ${UNITREE_RL_LAB_PATH}/scripts/rsl_rl/py/play.py "$@"
         ;;
     -t|--train)
         shift
-        ${python_exe} ${UNITREE_RL_LAB_PATH}/scripts/rsl_rl/train.py --headless "$@"
+        ${python_exe} ${UNITREE_RL_LAB_PATH}/scripts/rsl_rl/py/train.py --headless "$@"
         ;;
     *) # unknown option
         ;;

@@ -212,6 +212,32 @@ class OnPolicyRunner:
                     self.writer.add_scalar("Episode/" + key, value, locs["it"])
                     ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
 
+        # -- Terrain curriculum
+        # The terrain importer stores one current level and terrain type per
+        # parallel environment. Keep the complete mapping in the terminal log
+        # instead of only reporting the curriculum term's mean value.
+        terrain_string = ""
+        unwrapped_env = getattr(self.env, "unwrapped", self.env)
+        scene = getattr(unwrapped_env, "scene", None)
+        terrain = getattr(scene, "terrain", None)
+        terrain_levels = getattr(terrain, "terrain_levels", None)
+        terrain_types = getattr(terrain, "terrain_types", None)
+        if isinstance(terrain_levels, torch.Tensor) and terrain_levels.ndim == 1:
+            levels = terrain_levels.detach().cpu().tolist()
+            if isinstance(terrain_types, torch.Tensor) and terrain_types.shape == terrain_levels.shape:
+                types = terrain_types.detach().cpu().tolist()
+                terrain_entries = ", ".join(
+                    f"env{i}(type={int(terrain_type)}):{int(level)}"
+                    for i, (terrain_type, level) in enumerate(zip(types, levels))
+                )
+            else:
+                terrain_entries = ", ".join(f"env{i}:{int(level)}" for i, level in enumerate(levels))
+            terrain_string = f"{'Terrain levels:':>{pad}} {terrain_entries}\n"
+            if hasattr(self.writer, "add_histogram"):
+                self.writer.add_histogram(
+                    "Terrain/terrain_level", terrain_levels.detach().float(), locs["it"]
+                )
+
         mean_std = self.alg.policy.action_std.mean()
         fps = int(collection_size / (locs["collection_time"] + locs["learn_time"]))
 
@@ -278,6 +304,7 @@ class OnPolicyRunner:
                 log_string += f"""{f'{key}:':>{pad}} {value:.4f}\n"""
 
         log_string += ep_string
+        log_string += terrain_string
         log_string += (
             f"""{'-' * width}\n"""
             f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""

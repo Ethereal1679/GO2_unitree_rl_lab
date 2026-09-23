@@ -27,6 +27,9 @@ class AttentionVisualizationCfg:
 
     enabled: bool = True
     update_interval: int = 5
+    # Only the strongest points are highlighted; all remaining height-scan
+    # markers keep the blue base color.
+    top_k: int = 30
     aggregation: str = "mean"
     normalization: str = "percentile"
     percentile_low: float = 5.0

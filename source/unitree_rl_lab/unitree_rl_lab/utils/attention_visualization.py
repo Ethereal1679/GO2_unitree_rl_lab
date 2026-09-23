@@ -39,27 +39,42 @@ class HeightScanAttentionVisualizer:
         return getattr(cfg, name, default)
 
     @staticmethod
-    def _color_map(value: torch.Tensor) -> torch.Tensor:
-        """Map [0, 1] to blue -> cyan -> white -> yellow -> red."""
+    def _base_color(device: torch.device) -> torch.Tensor:
+        """Base color for height-scan markers that are not in the top-k."""
 
-        value = value.clamp(0.0, 1.0)
-        colors = torch.empty((*value.shape, 3), device=value.device, dtype=torch.float32)
+        return torch.tensor((0.0, 0.2, 1.0), device=device, dtype=torch.float32)
 
-        mask = value <= 0.25
-        local = value[mask] * 4.0
-        colors[mask] = torch.stack((torch.zeros_like(local), local, torch.ones_like(local)), dim=-1)
+    def _top_attention_colors(
+        self, attention: torch.Tensor, finite_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """Color only the strongest attention points red, fading to pale red.
 
-        mask = (value > 0.25) & (value <= 0.5)
-        local = (value[mask] - 0.25) * 4.0
-        colors[mask] = torch.stack((local, torch.ones_like(local), torch.ones_like(local)), dim=-1)
+        All finite points start blue.  The strongest point is pure red and the
+        remaining selected points progressively fade toward a pale red.  This
+        rank-based coloring makes the visualization readable even when the
+        attention values have a narrow dynamic range.
+        """
 
-        mask = (value > 0.5) & (value <= 0.75)
-        local = (value[mask] - 0.5) * 4.0
-        colors[mask] = torch.stack((torch.ones_like(local), torch.ones_like(local), 1.0 - local), dim=-1)
+        flat_attention = attention.reshape(-1)
+        flat_finite = finite_mask.reshape(-1)
+        colors = self._base_color(flat_attention.device).expand(flat_attention.numel(), 3).clone()
 
-        mask = value > 0.75
-        local = (value[mask] - 0.75) * 4.0
-        colors[mask] = torch.stack((torch.ones_like(local), 1.0 - local, torch.zeros_like(local)), dim=-1)
+        top_k = max(0, int(self._cfg_value(self.cfg, "top_k", 30)))
+        valid_indices = torch.nonzero(flat_finite, as_tuple=False).squeeze(-1)
+        if top_k == 0 or valid_indices.numel() == 0:
+            return colors
+
+        count = min(top_k, int(valid_indices.numel()))
+        _, order = torch.topk(flat_attention[valid_indices], k=count, largest=True, sorted=True)
+        selected_indices = valid_indices[order]
+
+        # Rank 0 is pure red; lower-ranked points fade toward a pale red.
+        rank = torch.arange(count, device=flat_attention.device, dtype=torch.float32)
+        fade = rank / max(count - 1, 1)
+        red = torch.tensor((1.0, 0.0, 0.0), device=flat_attention.device, dtype=torch.float32)
+        pale_red = torch.tensor((1.0, 0.82, 0.82), device=flat_attention.device, dtype=torch.float32)
+        selected_colors = red.unsqueeze(0) * (1.0 - fade.unsqueeze(1)) + pale_red.unsqueeze(0) * fade.unsqueeze(1)
+        colors[selected_indices] = selected_colors
         return colors
 
     def _normalize(self, attention: torch.Tensor, valid_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -93,10 +108,9 @@ class HeightScanAttentionVisualizer:
             return
 
         if self._colors is None or self._colors.shape != (count, 3):
-            # Isaac Lab's default ray-caster marker is red. Preserve that
-            # appearance for environments other than the selected env_id.
-            self._colors = np.zeros((count, 3), dtype=np.float32)
-            self._colors[:, 0] = 1.0
+            # Keep the complete height scan blue until attention is available.
+            # This also gives non-selected environments the same neutral base.
+            self._colors = np.tile((0.0, 0.2, 1.0), (count, 1)).astype(np.float32)
             self._opacity = np.ones((count,), dtype=np.float32)
 
         prim = visualizer._instancer_manager.GetPrim()
@@ -143,10 +157,10 @@ class HeightScanAttentionVisualizer:
             )
         attention = attention.reshape(attention.shape[0], height, width)[self.env_id]
         valid_mask = torch.isfinite(map_scans[self.env_id]).all(dim=-1)
-        normalized, finite_mask = self._normalize(attention, valid_mask)
-        colors = self._color_map(normalized.reshape(-1))
-        invalid_color = torch.tensor((0.5, 0.5, 0.5), device=colors.device, dtype=colors.dtype)
-        colors = torch.where(finite_mask.reshape(-1, 1), colors, invalid_color)
+        # Rank raw finite attention values so percentile clipping cannot make
+        # many points tie at the same color.
+        finite_mask = torch.isfinite(attention) & valid_mask
+        colors = self._top_attention_colors(attention, finite_mask)
 
         marker_valid = self._marker_valid_mask()
         if marker_valid.shape[0] != map_scans.shape[0] or marker_valid.shape[1] != height * width:
@@ -177,12 +191,11 @@ class HeightScanAttentionVisualizer:
         self._colors[selected_indices] = selected_colors.detach().cpu().numpy().astype(np.float32, copy=False)
         show_invalid = bool(self._cfg_value(self.cfg, "show_invalid_points", False))
         selected_finite_mask = finite_mask.reshape(-1)[selected_mask]
-        selected_normalized = normalized.reshape(-1)[selected_mask]
-        selected_opacity = torch.where(
-            selected_finite_mask,
-            torch.ones_like(selected_normalized),
-            torch.ones_like(selected_normalized) if show_invalid else torch.zeros_like(selected_normalized),
+        selected_opacity = torch.ones(
+            selected_finite_mask.shape, device=selected_finite_mask.device, dtype=torch.float32
         )
+        if not show_invalid:
+            selected_opacity = selected_opacity * selected_finite_mask.float()
         self._opacity[selected_indices] = selected_opacity.detach().cpu().numpy().astype(np.float32, copy=False)
         self._color_attr.Set(Vt.Vec3fArray.FromNumpy(self._colors))
         self._opacity_attr.Set(Vt.FloatArray.FromNumpy(self._opacity))

@@ -56,7 +56,7 @@ COBBLESTONE_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
         ),
         "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
             proportion=0.1,
-            step_height_range=(0.05, 0.3),
+            step_height_range=(0.05, 0.25),
             step_width=0.3,
             platform_width=3.0,
             border_width=1.0,
@@ -64,7 +64,7 @@ COBBLESTONE_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
         ),
         "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
             proportion=0.1,
-            step_height_range=(0.05, 0.3),
+            step_height_range=(0.05, 0.25),
             step_width=0.3,
             platform_width=3.0,
             border_width=1.0,
@@ -115,6 +115,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         ),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
+        visualizer_cfg=mdp.HEIGHT_SCAN_MARKER_CFG,
     )
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
     # lights
@@ -233,13 +234,7 @@ class ObservationsCfg:
     @configclass
     class ProprioceptionCfg(ObsGroup):
         """Proprioception input for the attention query."""
-
-        proprioception = ObsTerm(
-            func=mdp.go2_proprioception,
-            params={"command_name": "base_velocity"},
-            clip=(-100, 100),
-        )
-
+        proprioception = ObsTerm(func=mdp.go2_proprioception,params={"command_name": "base_velocity"},clip=(-100, 100),)
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
@@ -247,17 +242,7 @@ class ObservationsCfg:
     @configclass
     class MapScansCfg(ObsGroup):
         """Map-point input for the attention keys and values."""
-
-        map_scans = ObsTerm(
-            func=mdp.map_scan_points,
-            params={
-                "sensor_cfg": SceneEntityCfg("height_scanner"),
-                "asset_cfg": SceneEntityCfg("robot"),
-                "grid_shape": (16, 11),
-            },
-            clip=(-100, 100),
-        )
-
+        map_scans = ObsTerm(func=mdp.map_scan_points,params={"sensor_cfg": SceneEntityCfg("height_scanner"),"asset_cfg": SceneEntityCfg("robot"),"grid_shape": (16, 11),},clip=(-100, 100),)
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
@@ -274,9 +259,7 @@ class ObservationsCfg:
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, clip=(-100, 100))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, scale=0.2, clip=(-100, 100))
         projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100, 100))
-        velocity_commands = ObsTerm(
-            func=mdp.generated_commands, clip=(-100, 100), params={"command_name": "base_velocity"}
-        )
+        velocity_commands = ObsTerm(func=mdp.generated_commands, clip=(-100, 100), params={"command_name": "base_velocity"})
         joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, clip=(-100, 100))
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, clip=(-100, 100))
         joint_effort = ObsTerm(func=mdp.joint_effort, scale=0.01, clip=(-100, 100))
@@ -421,7 +404,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
         self.scene.contact_forces.update_period = self.sim.dt
-        self.scene.height_scanner.update_period = 1 / 10.0 #self.decimation * self.sim.dt * 5.0
+        self.scene.height_scanner.update_period = self.decimation * self.sim.dt # TODO 需要对齐真机10hz吗？
 
         # check if terrain levels curriculum is enabled - if so, enable curriculum for terrain generator
         # this generates terrains with increasing difficulty and is useful for training

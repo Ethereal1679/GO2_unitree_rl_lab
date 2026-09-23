@@ -11,13 +11,14 @@ import argparse
 import pathlib
 import sys
 
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "rsl_rl-3.0.1"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from isaaclab.app import AppLauncher
 
 # local imports
-import cli_args  # isort: skip
+from scripts.rsl_rl.py import cli_args  # isort: skip
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
@@ -196,6 +197,7 @@ def main():
     # 引入attention权重可视化
     attention_visualizer = None
     attention_viz_enabled = False
+    attention_viz_waiting_for_markers = False
     if args_cli.attention_enable_viz and policy_nn.__class__.__name__ == "AttentionMapActorCritic":
         from unitree_rl_lab.utils.attention_visualization import HeightScanAttentionVisualizer
 
@@ -235,7 +237,11 @@ def main():
         if attention_viz_enabled:
             policy_output = policy(obs, return_attention=True)
             actions = policy_output["actions"]
-            attention_visualizer.update(policy_output["attention_weights"], obs["map_scans"])
+            attention_viz_waiting_for_markers = not attention_visualizer.update(
+                policy_output["attention_weights"], obs["map_scans"]
+            )
+            if attention_viz_waiting_for_markers:
+                print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
         else:
             actions = policy(obs)
 
@@ -252,7 +258,10 @@ def main():
             if update_attention:
                 policy_output = policy(obs, return_attention=True)
                 actions = policy_output["actions"]
-                attention_visualizer.update(policy_output["attention_weights"], obs["map_scans"])
+                updated = attention_visualizer.update(policy_output["attention_weights"], obs["map_scans"])
+                if not updated and not attention_viz_waiting_for_markers:
+                    print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
+                attention_viz_waiting_for_markers = not updated
             else:
                 actions = policy(obs)
         if args_cli.video:
