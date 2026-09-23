@@ -31,6 +31,7 @@ class RslRlPpoAttentionActorCriticCfg(RslRlPpoActorCriticCfg):
     embedding_dim: int = 64
     num_heads: int = 16
     map_shape: tuple[int, int] = (26, 16)
+    return_attention_weights: bool = False
 
 
 @configclass

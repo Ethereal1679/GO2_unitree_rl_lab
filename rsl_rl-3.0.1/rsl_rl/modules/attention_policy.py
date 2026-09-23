@@ -122,6 +122,30 @@ class AttentionMapEncoder(nn.Module):
         assert attention_weights is not None
         return map_encoding, attention_weights
 
+    def encode(
+        self,
+        map_scans: Tensor,
+        proprioception: Tensor,
+        valid_mask: Tensor | None = None,
+    ) -> Tensor:
+        """Encode the map without materializing per-head attention weights."""
+
+        height = map_scans[..., 2].unsqueeze(1)
+        cnn_features = self.map_cnn(height).permute(0, 2, 3, 1)
+        point_features = torch.cat((cnn_features, map_scans), dim=-1).reshape(
+            map_scans.shape[0], self.num_map_points, self.embedding_dim
+        )
+        query = self.proprioception_encoder(proprioception).unsqueeze(1)
+        key_padding_mask = None if valid_mask is None else ~valid_mask.to(dtype=torch.bool)
+        map_encoding, _ = self.cross_attention(
+            query,
+            point_features,
+            point_features,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
+        )
+        return map_encoding
+
 
 class Go2AttentionPolicy(nn.Module):
     """Standalone deterministic Go2 attention policy."""
@@ -186,6 +210,7 @@ class AttentionMapActor(nn.Module):
         embedding_dim: int = 64,
         num_heads: int = 16,
         hidden_dims: Sequence[int] = (256, 128),
+        return_attention_weights: bool = False,
     ) -> None:
         super().__init__()
         self.proprioception_dim = proprioception_dim
@@ -194,6 +219,8 @@ class AttentionMapActor(nn.Module):
         self.map_width = map_shape[1]
         self.map_dim = map_shape[0] * map_shape[1] * 3
         self.in_features = proprioception_dim + self.map_dim
+        self.return_attention_weights = return_attention_weights
+        self.register_buffer("last_attention_weights", torch.empty(0), persistent=False)
         self.map_encoder = AttentionMapEncoder(
             embedding_dim=embedding_dim,
             num_heads=num_heads,
@@ -218,6 +245,10 @@ class AttentionMapActor(nn.Module):
         map_scans = actor_input[..., self.proprioception_dim :].reshape(
             -1, self.map_height, self.map_width, 3
         )
-        map_encoding, _ = self.map_encoder(map_scans, proprioception)
+        if self.return_attention_weights:
+            map_encoding, attention_weights = self.map_encoder(map_scans, proprioception)
+            self.last_attention_weights = attention_weights.detach()
+        else:
+            map_encoding = self.map_encoder.encode(map_scans, proprioception)
         policy_input = torch.cat((map_encoding.flatten(start_dim=1), proprioception), dim=-1)
         return self.policy_mlp(policy_input)

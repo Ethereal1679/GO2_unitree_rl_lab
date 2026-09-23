@@ -1,5 +1,4 @@
 import math
-
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
@@ -19,6 +18,8 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 
 from unitree_rl_lab.assets.robots.unitree import UNITREE_GO2_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
+from unitree_rl_lab.tasks.locomotion.mdp.terrains import CourageGapsTerrainCfg
+
 
 COBBLESTONE_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
     size=(8.0, 8.0),
@@ -45,6 +46,9 @@ COBBLESTONE_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
         ),
         "boxes": terrain_gen.MeshRandomGridTerrainCfg(
             proportion=0.2, grid_width=0.45, grid_height_range=(0.05, 0.2), platform_width=2.0
+        ),
+        "courage_gaps": CourageGapsTerrainCfg(
+            proportion=0.2,
         ),
         # "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
         #     proportion=0.2,
@@ -102,7 +106,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(
             resolution=0.1,
-            size=[2.5, 1.5],
+            size=[1.5, 1.0],
             ordering="yx",
         ),
         debug_vis=False,
@@ -245,7 +249,7 @@ class ObservationsCfg:
             params={
                 "sensor_cfg": SceneEntityCfg("height_scanner"),
                 "asset_cfg": SceneEntityCfg("robot"),
-                "grid_shape": (26, 16),
+                "grid_shape": (16, 11),
             },
             clip=(-100, 100),
         )
@@ -431,6 +435,9 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 32
         self.scene.terrain.terrain_generator.num_rows = 5
-        self.scene.terrain.terrain_generator.num_cols = 5
+        # Keep at least one curriculum column for every configured terrain type.
+        self.scene.terrain.terrain_generator.num_cols = max(
+            5, len(self.scene.terrain.terrain_generator.sub_terrains)
+        )
         self.scene.height_scanner.debug_vis = True # 开启调试可视化
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges

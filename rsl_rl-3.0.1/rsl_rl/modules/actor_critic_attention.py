@@ -38,6 +38,7 @@ class AttentionMapActorCritic(nn.Module):
         embedding_dim: int = 64,
         num_heads: int = 16,
         map_shape: tuple[int, int] = (26, 16),
+        return_attention_weights: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -54,7 +55,10 @@ class AttentionMapActorCritic(nn.Module):
         map_scans = obs[map_scans_obs_group]
         if tuple(proprioception.shape[1:]) != (48,):
             raise ValueError(f"Expected proprioception shape [B, 48], got {tuple(proprioception.shape)}")
-        expected_map_shape = (map_shape[0], map_shape[1], 3)
+        if map_scans.ndim != 4 or map_scans.shape[-1] != 3:
+            raise ValueError(f"Expected map_scans shape [B, H, W, 3], got {tuple(map_scans.shape)}")
+        map_shape = tuple(map_scans.shape[1:3])
+        expected_map_shape = (*map_shape, 3)
         if tuple(map_scans.shape[1:]) != expected_map_shape:
             raise ValueError(f"Expected map_scans shape [B, *{expected_map_shape}], got {tuple(map_scans.shape)}")
 
@@ -66,6 +70,7 @@ class AttentionMapActorCritic(nn.Module):
             embedding_dim=embedding_dim,
             num_heads=num_heads,
             hidden_dims=actor_hidden_dims,
+            return_attention_weights=return_attention_weights,
         )
         self.actor_obs_normalization = actor_obs_normalization
         self.actor_obs_normalizer = (
@@ -149,6 +154,12 @@ class AttentionMapActorCritic(nn.Module):
     def act_inference(self, obs):
         actor_obs = self.actor_obs_normalizer(self.get_actor_obs(obs))
         return self.actor(actor_obs)
+
+    @property
+    def attention_weights(self):
+        """Most recent inference attention weights, or an empty tensor when disabled."""
+
+        return self.actor.last_attention_weights
 
     def evaluate(self, obs, **kwargs):
         critic_obs = self.critic_obs_normalizer(self.get_critic_obs(obs))
