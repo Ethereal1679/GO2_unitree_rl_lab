@@ -7,9 +7,11 @@ python "${SCRIPT_DIR}/py/train.py" \
     --task go2_att \
     --logger tensorboard \
     --num_envs 2048 \
-    --run_name "go2_attention_train" \
+    --run_name "go2_attention-no_resume-remake_policy" \
     --max_iterations 99999999 \
-    --headless
+    --headless \
+    # --resume \
+    # --load_run 2026-09-24_03-51-08_go2_attention_train2 \
 
 
 

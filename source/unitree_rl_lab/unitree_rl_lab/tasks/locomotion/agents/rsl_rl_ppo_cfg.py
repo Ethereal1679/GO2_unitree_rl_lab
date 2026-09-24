@@ -42,11 +42,9 @@ class RslRlPpoAttentionActorCriticCfg(RslRlPpoActorCriticCfg):
     """Actor-critic configuration for the Go2 map-attention policy."""
 
     class_name: str = "AttentionMapActorCritic"
-    proprioception_obs_group: str = "proprioception"
-    map_scans_obs_group: str = "map_scans"
     embedding_dim: int = 64
     num_heads: int = 16
-    map_shape: tuple[int, int] = (26, 16)
+    map_shape: tuple[int, int] = (16, 11)
     return_attention_weights: bool = False
     attention_visualization: AttentionVisualizationCfg = AttentionVisualizationCfg()
 
@@ -71,7 +69,7 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         use_clipped_value_loss=True,
         clip_param=0.2,
         entropy_coef=0.01,
-        num_learning_epochs=5,
+        num_learning_epochs=3, #5, # TODO 不知道会不会很大影响
         num_mini_batches=4,
         learning_rate=1.0e-3,
         schedule="adaptive",
@@ -101,7 +99,7 @@ class Go2VAERunnerCfg(BasePPORunnerCfg):
 class Go2AttentionRunnerCfg(BasePPORunnerCfg):
     """Go2 PPO runner using the height-map cross-attention actor."""
 
-    obs_groups = {"policy": ["proprioception", "map_scans"], "critic": ["critic"]}
+    obs_groups = {"policy": ["policy"], "critic": ["critic"]}
     policy = RslRlPpoAttentionActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=False,
@@ -111,5 +109,5 @@ class Go2AttentionRunnerCfg(BasePPORunnerCfg):
         activation="elu",
         embedding_dim=64,
         num_heads=16,
-        map_shape=(26, 16),
+        map_shape=(16, 11),
     )

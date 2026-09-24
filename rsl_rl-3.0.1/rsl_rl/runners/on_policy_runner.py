@@ -214,29 +214,74 @@ class OnPolicyRunner:
 
         # -- Terrain curriculum
         # The terrain importer stores one current level and terrain type per
-        # parallel environment. Keep the complete mapping in the terminal log
-        # instead of only reporting the curriculum term's mean value.
+        # parallel environment. Report the mean level independently for each
+        # terrain type, as in Isaac Gym's
+        # ``extras["episode"]["terrain_level"]`` implementation.
         terrain_string = ""
         unwrapped_env = getattr(self.env, "unwrapped", self.env)
         scene = getattr(unwrapped_env, "scene", None)
         terrain = getattr(scene, "terrain", None)
         terrain_levels = getattr(terrain, "terrain_levels", None)
         terrain_types = getattr(terrain, "terrain_types", None)
-        if isinstance(terrain_levels, torch.Tensor) and terrain_levels.ndim == 1:
-            levels = terrain_levels.detach().cpu().tolist()
-            if isinstance(terrain_types, torch.Tensor) and terrain_types.shape == terrain_levels.shape:
-                types = terrain_types.detach().cpu().tolist()
-                terrain_entries = ", ".join(
-                    f"env{i}(type={int(terrain_type)}):{int(level)}"
-                    for i, (terrain_type, level) in enumerate(zip(types, levels))
+        if (
+            isinstance(terrain_levels, torch.Tensor)
+            and terrain_levels.ndim == 1
+            and isinstance(terrain_types, torch.Tensor)
+            and terrain_types.shape == terrain_levels.shape
+        ):
+            # ``terrain_types`` indexes terrain columns, while the configured
+            # terrain names are sub-terrain classes. Map each column back to
+            # its class using the generator proportions, then aggregate all
+            # columns belonging to the same class.
+            terrain_importer_cfg = getattr(terrain, "cfg", None)
+            terrain_generator_cfg = getattr(terrain_importer_cfg, "terrain_generator", None)
+            sub_terrains = getattr(terrain_generator_cfg, "sub_terrains", None)
+            terrain_names = list(sub_terrains.keys()) if isinstance(sub_terrains, dict) else []
+            terrain_name_by_type = {}
+            if not terrain_names:
+                warnings.warn(
+                    "Unable to read terrain names from terrain.cfg.terrain_generator.sub_terrains; "
+                    "per-terrain level logging is disabled."
                 )
             else:
-                terrain_entries = ", ".join(f"env{i}:{int(level)}" for i, level in enumerate(levels))
-            terrain_string = f"{'Terrain levels:':>{pad}} {terrain_entries}\n"
-            if hasattr(self.writer, "add_histogram"):
-                self.writer.add_histogram(
-                    "Terrain/terrain_level", terrain_levels.detach().float(), locs["it"]
+                terrain_cfgs = list(sub_terrains.values())
+                proportions = [float(getattr(cfg, "proportion", 1.0)) for cfg in terrain_cfgs]
+                proportion_sum = sum(proportions)
+                num_cols = int(getattr(terrain_generator_cfg, "num_cols", 0))
+                if num_cols <= 0:
+                    num_cols = int(terrain_types.max().item()) + 1
+                cumulative = 0.0
+                proportion_ranges = []
+                for name, proportion in zip(terrain_names, proportions):
+                    cumulative += proportion / proportion_sum
+                    proportion_ranges.append((cumulative, name))
+                for terrain_type_id in torch.unique(terrain_types, sorted=True).tolist():
+                    column_position = terrain_type_id / num_cols + 0.001
+                    terrain_name_by_type[int(terrain_type_id)] = next(
+                        (name for upper_bound, name in proportion_ranges if column_position < upper_bound),
+                        terrain_names[-1],
+                    )
+
+            terrain_masks_by_name = {}
+            for terrain_type in torch.unique(terrain_types, sorted=True):
+                terrain_type_id = int(terrain_type.item())
+                terrain_name = terrain_name_by_type.get(terrain_type_id)
+                if terrain_name is None:
+                    continue
+                terrain_masks_by_name[terrain_name] = terrain_masks_by_name.get(
+                    terrain_name, torch.zeros_like(terrain_types, dtype=torch.bool)
+                ) | (terrain_types == terrain_type)
+
+            terrain_level_entries = []
+            for terrain_name, terrain_mask in terrain_masks_by_name.items():
+                mean_terrain_level = terrain_levels[terrain_mask].detach().float().mean()
+                terrain_level_entries.append(
+                    f"{f'Mean {terrain_name} terrain level:':>{pad}} {mean_terrain_level.item():.2f}\n"
                 )
+                self.writer.add_scalar(
+                    f"Terrain/terrain_level/{terrain_name}", mean_terrain_level, locs["it"]
+                )
+            terrain_string = "".join(terrain_level_entries)
 
         mean_std = self.alg.policy.action_std.mean()
         fps = int(collection_size / (locs["collection_time"] + locs["learn_time"]))

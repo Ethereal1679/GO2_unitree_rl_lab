@@ -117,13 +117,134 @@ def courage_gaps_terrain(
     return meshes, origin
 
 
+def modular_pillar_terrain(
+    difficulty: float, cfg: ModularPillarTerrainCfg
+) -> tuple[list[trimesh.Trimesh], np.ndarray]:
+    """Generate one excavated pillar field for a terrain-generator tile.
+
+    The complete terrain tile is one square pit.  Its center platform rises
+    from the pit floor to ``z=0``; random pillars also rise from the floor but
+    never above the ground plane.  TerrainGenerator arranges these tiles, so
+    this function intentionally has no internal zone layout.
+    """
+    difficulty = float(np.clip(difficulty, 0.0, 1.0))
+
+    if cfg.pillar_size <= 0.0:
+        raise ValueError("pillar_size must be positive")
+    if (
+        cfg.dense_grid_spacing <= cfg.pillar_size
+        or cfg.grid_spacing <= cfg.pillar_size
+        or cfg.dense_grid_spacing > cfg.grid_spacing
+    ):
+        raise ValueError(
+            "dense_grid_spacing and grid_spacing must exceed pillar_size, "
+            "with dense_grid_spacing <= grid_spacing"
+        )
+    if not np.isclose(cfg.platform_height, 0.0):
+        raise ValueError(
+            "platform_height must be 0.0 so the center platform stays level with the ground"
+        )
+    if (
+        cfg.pillar_height_range[0] <= 0.0
+        or cfg.pillar_height_range[1] < cfg.pillar_height_range[0]
+    ):
+        raise ValueError("pillar_height_range must be positive and ordered")
+    if cfg.floor_thickness <= 0.0:
+        raise ValueError("floor_thickness must be positive")
+    if not np.isclose(cfg.size[0], cfg.size[1]):
+        raise ValueError(f"modular_pillars requires a square terrain, got size={cfg.size}")
+
+    terrain_width = float(cfg.size[0])
+    if cfg.platform_size <= 0.0 or cfg.platform_size >= terrain_width:
+        raise ValueError("platform_size must be positive and smaller than the terrain size")
+    if cfg.border_width <= 0.0 or 2.0 * cfg.border_width >= terrain_width:
+        raise ValueError("border_width must be positive and leave room for the pit")
+    if cfg.platform_size >= terrain_width - 2.0 * cfg.border_width:
+        raise ValueError("platform_size must fit inside the excavated area")
+
+    # A fixed seed gives reproducible pillar layouts for terrain caching and
+    # training restarts. Difficulty controls spacing only: easy tiles are
+    # densely packed and hard tiles are sparse. The deepest allowed pillar
+    # defines the pit depth, so no pillar extends above the ground plane.
+    seed = cfg.random_seed + int(round(difficulty * 100_000.0)) * 7_919
+    rng = np.random.default_rng(seed)
+    min_height, max_height = cfg.pillar_height_range
+    grid_spacing = cfg.dense_grid_spacing + difficulty * (cfg.grid_spacing - cfg.dense_grid_spacing)
+    pit_depth = max_height
+    meshes: list[trimesh.Trimesh] = []
+
+    def add_box(center: tuple[float, float, float], dimensions: tuple[float, float, float]) -> None:
+        meshes.append(
+            trimesh.creation.box(
+                dimensions,
+                trimesh.transformations.translation_matrix(center),
+            )
+        )
+
+    terrain_center = terrain_width / 2.0
+    platform_half = cfg.platform_size / 2.0
+    terrain_half = terrain_width / 2.0
+    pit_half = terrain_half - cfg.border_width
+
+    # The floor closes every excavation, so rays and falling robots never enter
+    # an unbounded void.  It is also the base from which pillars grow.
+    add_box(
+        (terrain_center, terrain_center, -pit_depth - cfg.floor_thickness / 2.0),
+        (terrain_width, terrain_width, cfg.floor_thickness),
+    )
+
+    # A level solid rim surrounds the pit.  Neighboring terrain-generator
+    # tiles meet on this rim rather than connecting their pillar fields.
+    meshes.extend(
+        _make_square_annulus(
+            pit_half,
+            terrain_half,
+            pit_depth,
+            (terrain_center, terrain_center),
+        )
+    )
+
+    # This platform grows from the pit floor, with its top exactly level with
+    # the ground plane of neighboring terrain tiles.
+    add_box(
+        (terrain_center, terrain_center, -pit_depth / 2.0),
+        (cfg.platform_size, cfg.platform_size, pit_depth),
+    )
+
+    # Pillars start on the pit floor.  A single, centered square grid is filled
+    # row-by-row, so every adjacent pair uses exactly the curriculum spacing.
+    # The grid deliberately extends into the level rim when needed; overlapping
+    # that outer platform is preferable to creating irregular pillar spacing.
+    pillar_half = cfg.pillar_size / 2.0
+    axis_count = int(np.floor((terrain_half - pillar_half) / grid_spacing))
+    axis_coordinates = grid_spacing * np.arange(-axis_count, axis_count + 1, dtype=float)
+
+    for local_y in axis_coordinates:
+        for local_x in axis_coordinates:
+            if (
+                abs(local_x) < platform_half + pillar_half
+                and abs(local_y) < platform_half + pillar_half
+            ):
+                continue
+
+            height = float(rng.uniform(min_height, max_height))
+            add_box(
+                (terrain_center + local_x, terrain_center + local_y, -pit_depth + height / 2.0),
+                (cfg.pillar_size, cfg.pillar_size, height),
+            )
+
+    # The center platform is the unique spawn platform for this terrain tile.
+    origin = np.array([terrain_center, terrain_center, 0.0])
+    return meshes, origin
+
+
 @configclass
 class CourageGapsTerrainCfg(terrain_gen.SubTerrainBaseCfg):
     """Concentric, curriculum-controlled trenches around a center platform."""
 
     function = courage_gaps_terrain
 
-    platform_width: float = 2.0
+    platform_width: float = 1.5
     """Width of the square center platform where the robot starts (m)."""
 
     num_gaps: int = 3
@@ -140,3 +261,39 @@ class CourageGapsTerrainCfg(terrain_gen.SubTerrainBaseCfg):
 
     floor_thickness: float = 0.10
     """Thickness of the physical floor below all gaps (m)."""
+
+
+@configclass
+class ModularPillarTerrainCfg(terrain_gen.SubTerrainBaseCfg):
+    """Configuration for one terrain tile with an excavated pillar field."""
+
+    function = modular_pillar_terrain
+
+    pillar_size: float = 0.4
+    """Square pillar side length (m)."""
+
+    grid_spacing: float = 1.0
+    """Pillar spacing at difficulty 1, the sparsest curriculum level (m)."""
+
+    dense_grid_spacing: float = 0.6
+    """Pillar spacing at difficulty 0, the densest curriculum level (m)."""
+
+    pillar_height_range: tuple[float, float] = (0.5, 2.0)
+    """Minimum and maximum pillar heights measured from the pit floor (m)."""
+
+    platform_size: float = 5.0
+    """Side length of each level square center platform (m)."""
+
+    border_width: float = 1.0
+    """Width of the level outer rim that separates adjacent terrain tiles (m)."""
+
+    platform_height: float = 0.0
+    """Must remain zero: the center platform is level with the ground plane."""
+
+    floor_thickness: float = 0.10
+    """Thickness of the physical floor beneath each large excavation (m)."""
+
+    random_seed: int = 20260924
+    """Seed used for reproducible pillar heights."""
+
+

@@ -8,16 +8,40 @@ from torch.distributions import Normal
 
 from rsl_rl.networks import EmpiricalNormalization, MLP
 
-from .attention_policy import AttentionMapActor
+from .attention_policy import AttentionMapEncoder
+
+
+class _FlatAttentionActor(nn.Module):
+    """Flat-input actor wrapper used by PPO and Isaac Lab exporters."""
+
+    def __init__(self, encoder: AttentionMapEncoder, mlp: nn.Module, in_features: int):
+        super().__init__()
+        self.encoder = encoder
+        self.mlp = mlp
+        self.in_features = in_features
+
+    def __getitem__(self, index: int):
+        if index != 0:
+            raise IndexError(index)
+        return self
+
+    def forward(self, observation: torch.Tensor) -> torch.Tensor:
+        proprioception, map_scans = self.encoder.split_observation(observation)
+        map_encoding = self.encoder.encode(map_scans, proprioception, role="actor").flatten(start_dim=1)
+        return self.mlp(torch.cat((map_encoding, proprioception), dim=-1))
+
+    def forward_with_attention(self, observation: torch.Tensor) -> dict[str, torch.Tensor]:
+        map_encoding, attention, proprioception = self.encoder.forward_observation(
+            observation, role="actor", return_attention=True
+        )
+        return {
+            "actions": self.mlp(torch.cat((map_encoding, proprioception), dim=-1)),
+            "attention_weights": attention,
+        }
 
 
 class AttentionMapActorCritic(nn.Module):
-    """PPO-compatible actor-critic with attention-based map encoding.
-
-    The environment must provide top-level ``proprioception`` and ``map_scans``
-    observation groups. The critic continues to use the configured flattened
-    critic observation groups.
-    """
+    """PPO actor-critic whose actor and critic both encode the map tail."""
 
     is_recurrent = False
 
@@ -33,8 +57,6 @@ class AttentionMapActorCritic(nn.Module):
         activation="elu",
         init_noise_std=1.0,
         noise_std_type: str = "scalar",
-        proprioception_obs_group: str = "proprioception",
-        map_scans_obs_group: str = "map_scans",
         embedding_dim: int = 64,
         num_heads: int = 16,
         map_shape: tuple[int, int] = (26, 16),
@@ -49,39 +71,41 @@ class AttentionMapActorCritic(nn.Module):
                 + str(list(kwargs.keys()))
             )
         self.obs_groups = obs_groups
-        self.proprioception_obs_group = proprioception_obs_group
-        self.map_scans_obs_group = map_scans_obs_group
-
-        proprioception = obs[proprioception_obs_group]
-        map_scans = obs[map_scans_obs_group]
-        if tuple(proprioception.shape[1:]) != (48,):
-            raise ValueError(f"Expected proprioception shape [B, 48], got {tuple(proprioception.shape)}")
-        if map_scans.ndim != 4 or map_scans.shape[-1] != 3:
-            raise ValueError(f"Expected map_scans shape [B, H, W, 3], got {tuple(map_scans.shape)}")
-        map_shape = tuple(map_scans.shape[1:3])
-        expected_map_shape = (*map_shape, 3)
-        if tuple(map_scans.shape[1:]) != expected_map_shape:
-            raise ValueError(f"Expected map_scans shape [B, *{expected_map_shape}], got {tuple(map_scans.shape)}")
-
-        num_critic_obs = self._get_flat_group_dim(obs, obs_groups["critic"])
-        self.actor = AttentionMapActor(
-            num_actions=num_actions,
-            proprioception_dim=48,
-            map_shape=map_shape,
+        actor_obs = self._flatten_groups(obs, obs_groups["policy"])
+        critic_obs = self._flatten_groups(obs, obs_groups["critic"])
+        map_dim = map_shape[0] * map_shape[1] * 3
+        actor_proprioception_dim = actor_obs.shape[-1] - map_dim
+        critic_proprioception_dim = critic_obs.shape[-1] - map_dim
+        if actor_proprioception_dim <= 0 or critic_proprioception_dim <= 0:
+            raise ValueError(
+                f"map tail ({map_dim}) must leave proprioception in both observations: "
+                f"actor={actor_obs.shape[-1]}, critic={critic_obs.shape[-1]}"
+            )
+        self.map_shape = map_shape
+        self.map_dim = map_dim
+        self.actor_proprioception_dim = actor_proprioception_dim
+        self.critic_proprioception_dim = critic_proprioception_dim
+        encoder = AttentionMapEncoder(
             embedding_dim=embedding_dim,
             num_heads=num_heads,
-            hidden_dims=actor_hidden_dims,
-            return_attention_weights=return_attention_weights,
+            proprioception_dim=actor_proprioception_dim,
+            critic_proprioception_dim=critic_proprioception_dim,
+            map_shape=map_shape,
         )
+        actor_mlp = MLP(embedding_dim + actor_proprioception_dim, num_actions, list(actor_hidden_dims), activation)
+        self.actor_obs_dim = actor_obs.shape[-1]
+        self.actor = _FlatAttentionActor(encoder, actor_mlp, self.actor_obs_dim)
         self.actor_obs_normalization = actor_obs_normalization
         self.actor_obs_normalizer = (
-            EmpiricalNormalization(self.actor.in_features) if actor_obs_normalization else nn.Identity()
+            EmpiricalNormalization(actor_obs.shape[-1]) if actor_obs_normalization else nn.Identity()
         )
-        self.critic = MLP(num_critic_obs, 1, list(critic_hidden_dims), activation)
+        self.critic = MLP(embedding_dim + critic_proprioception_dim, 1, list(critic_hidden_dims), activation)
         self.critic_obs_normalization = critic_obs_normalization
         self.critic_obs_normalizer = (
-            EmpiricalNormalization(num_critic_obs) if critic_obs_normalization else nn.Identity()
+            EmpiricalNormalization(critic_obs.shape[-1]) if critic_obs_normalization else nn.Identity()
         )
+        self.register_buffer("last_attention_weights", torch.empty(0), persistent=False)
+        print(f"Attention encoder: {self.encoder}")
         print(f"Attention actor: {self.actor}")
         print(f"Critic MLP: {self.critic}")
 
@@ -95,23 +119,19 @@ class AttentionMapActorCritic(nn.Module):
         self.distribution = None
         Normal.set_default_validate_args(False)
 
-    @staticmethod
-    def _get_flat_group_dim(obs, groups) -> int:
-        total = 0
-        for group_name in groups:
-            group = obs[group_name]
-            if isinstance(group, torch.Tensor):
-                total += group[0].numel()
-            else:
-                for value in group.values():
-                    total += value[0].numel() if value.ndim > 1 else value.shape[-1]
-        return total
+    @property
+    def encoder(self) -> AttentionMapEncoder:
+        return self.actor.encoder
 
     @staticmethod
     def _flatten_group(group) -> torch.Tensor:
         if isinstance(group, torch.Tensor):
-            return group
+            return group.flatten(start_dim=1)
         return torch.cat([value.flatten(start_dim=1) for value in group.values()], dim=-1)
+
+    @classmethod
+    def _flatten_groups(cls, obs, groups) -> torch.Tensor:
+        return torch.cat([cls._flatten_group(obs[name]) for name in groups], dim=-1)
 
     def reset(self, dones=None):
         pass
@@ -120,9 +140,14 @@ class AttentionMapActorCritic(nn.Module):
         """Run the actor and optionally return the map attention weights."""
 
         actor_obs = self.actor_obs_normalizer(self.get_actor_obs(obs))
+        map_encoding, attention, proprioception = self.encoder.forward_observation(
+            actor_obs, role="actor", return_attention=return_attention
+        )
+        actions = self.actor.mlp(torch.cat((map_encoding, proprioception), dim=-1))
         if return_attention:
-            return self.actor.forward_with_attention(actor_obs)
-        return self.actor(actor_obs)
+            self.last_attention_weights = attention.detach()
+            return {"actions": actions, "attention_weights": attention}
+        return actions
 
     @property
     def action_mean(self):
@@ -137,16 +162,15 @@ class AttentionMapActorCritic(nn.Module):
         return self.distribution.entropy().sum(dim=-1)
 
     def get_actor_obs(self, obs):
-        proprioception = obs[self.proprioception_obs_group]
-        map_scans = obs[self.map_scans_obs_group]
-        return torch.cat((proprioception, map_scans.flatten(start_dim=1)), dim=-1)
+        return self._flatten_groups(obs, self.obs_groups["policy"])
 
     def get_critic_obs(self, obs):
-        return torch.cat([self._flatten_group(obs[group_name]) for group_name in self.obs_groups["critic"]], dim=-1)
+        return self._flatten_groups(obs, self.obs_groups["critic"])
 
     def update_distribution(self, obs):
         actor_obs = self.actor_obs_normalizer(self.get_actor_obs(obs))
-        mean = self.actor(actor_obs)
+        map_encoding, _, proprioception = self.encoder.forward_observation(actor_obs, role="actor")
+        mean = self.actor.mlp(torch.cat((map_encoding, proprioception), dim=-1))
         if self.noise_std_type == "scalar":
             std = self.std.expand_as(mean)
         else:
@@ -164,11 +188,18 @@ class AttentionMapActorCritic(nn.Module):
     def attention_weights(self):
         """Most recent inference attention weights, or an empty tensor when disabled."""
 
-        return self.actor.last_attention_weights
+        return self.last_attention_weights
 
     def evaluate(self, obs, **kwargs):
         critic_obs = self.critic_obs_normalizer(self.get_critic_obs(obs))
-        return self.critic(critic_obs)
+        map_encoding, _, proprioception = self.encoder.forward_observation(critic_obs, role="critic")
+        return self.critic(torch.cat((map_encoding, proprioception), dim=-1))
+
+    def get_actor_map_scans(self, obs) -> torch.Tensor:
+        """Return the actor map tail for visualization."""
+
+        flat_obs = self.get_actor_obs(obs)
+        return flat_obs[:, -self.map_dim :].reshape(-1, *self.map_shape, 3)
 
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)

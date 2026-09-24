@@ -91,6 +91,7 @@ def feet_stumble(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Te
     return reward
 
 
+
 def feet_height_body(
     env: ManagerBasedRLEnv,
     command_name: str,

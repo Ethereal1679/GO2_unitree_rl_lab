@@ -97,45 +97,20 @@ def height_scan_with_delay(
     return state["buffer"][state["delay_frames"], env_ids]
 
 
-def go2_proprioception(env: ManagerBasedRLEnv, command_name: str = "base_velocity") -> torch.Tensor:
-    """Return the Go2 proprioception vector in the attention-policy order.
-
-    The returned order is command (3), base linear/angular velocity (6),
-    projected gravity (3), relative joint position (12), relative joint
-    velocity (12), and previous action (12).
-    """
-
-    command = isaaclab_mdp.generated_commands(env, command_name=command_name)
-    base_lin_vel = isaaclab_mdp.base_lin_vel(env)
-    base_ang_vel = isaaclab_mdp.base_ang_vel(env)
-    projected_gravity = isaaclab_mdp.projected_gravity(env)
-    joint_pos_rel = isaaclab_mdp.joint_pos_rel(env)
-    joint_vel_rel = isaaclab_mdp.joint_vel_rel(env)
-    last_action = isaaclab_mdp.last_action(env)
-    proprioception = torch.cat(
-        (
-            command,
-            base_lin_vel,
-            base_ang_vel,
-            projected_gravity,
-            joint_pos_rel,
-            joint_vel_rel,
-            last_action,
-        ),
-        dim=-1,
-    )
-    if proprioception.shape[-1] != 48:
-        raise RuntimeError(f"Go2 proprioception must have 48 values, got {proprioception.shape[-1]}")
-    return proprioception
-
-
 def map_scan_points(
     env: ManagerBasedRLEnv,
     sensor_cfg,
     asset_cfg,
-    grid_shape: tuple[int, int] = (26, 16),
+    grid_shape: tuple[int, int] = (16, 11),
+    noise: bool = False,
 ) -> torch.Tensor:
-    """Return ray-hit points in the robot base frame as ``[B, 26, 16, 3]``."""
+    """Return ray-hit XYZ points in base frame as a flat observation tail.
+
+    When ``noise`` is enabled, Gaussian height noise (3 cm standard deviation)
+    and a per-environment height offset (resampled in the range +/-5 cm on
+    reset) are applied before flattening.  The offset is kept on ``env`` so it
+    remains fixed throughout an episode.
+    """
 
     sensor = env.scene.sensors[sensor_cfg.name]
     asset = env.scene[asset_cfg.name]
@@ -145,7 +120,30 @@ def map_scan_points(
     ray_hits_b = quat_apply_inverse(root_quat_w, relative_hits_w)
     expected_points = grid_shape[0] * grid_shape[1]
     if ray_hits_b.shape[1] != expected_points:
-        raise RuntimeError(
-            f"Expected {expected_points} map points for grid {grid_shape}, got {ray_hits_b.shape[1]}"
-        )
-    return ray_hits_b.reshape(ray_hits_b.shape[0], grid_shape[0], grid_shape[1], 3)
+        raise RuntimeError(f"Expected {expected_points} map points for grid {grid_shape}, got {ray_hits_b.shape[1]}")
+
+    if noise:
+        num_envs = ray_hits_b.shape[0]
+        offset = getattr(env, "_map_scan_points_offset", None)
+        if (
+            offset is None
+            or offset.shape != (num_envs, 1)
+            or offset.device != ray_hits_b.device
+        ):
+            offset = torch.zeros((num_envs, 1), device=ray_hits_b.device)
+            setattr(env, "_map_scan_points_offset", offset)
+
+        # Resample the sensor initialization error independently per reset env.
+        if hasattr(env, "reset_buf"):
+            reset_env_ids = env.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+            if reset_env_ids.numel() > 0:
+                offset[reset_env_ids] = torch.rand(
+                    (reset_env_ids.numel(), 1), device=ray_hits_b.device
+                ) * 0.1 - 0.05 # 每个环境在 reset 时重采样 ±5 cm 的整体高度偏移；
+
+        # Z 坐标加入标准差 3 cm 的高斯噪声
+        ray_hits_b = ray_hits_b.clone()
+        ray_hits_b[..., 2] += torch.randn_like(ray_hits_b[..., 2]) * 0.03
+        ray_hits_b[..., 2] += offset
+        ray_hits_b[..., 2] = torch.clamp(ray_hits_b[..., 2], min=-1.2, max=0.0) # Z 值限制在 [-1.2, 0.0]；
+    return ray_hits_b.reshape(ray_hits_b.shape[0], -1)

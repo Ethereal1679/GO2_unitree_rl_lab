@@ -203,11 +203,12 @@ def main():
 
         attention_viz_cfg = getattr(agent_cfg.policy, "attention_visualization", None)
         attention_viz_enabled = bool(getattr(attention_viz_cfg, "enabled", True))
+        # 修改可视化env id，从而观测不同地形的效果
         if attention_viz_enabled:
             attention_visualizer = HeightScanAttentionVisualizer(
                 env,
                 attention_viz_cfg,
-                env_id=0,
+                env_id=30,
             )
             interval = max(1, int(getattr(attention_viz_cfg, "update_interval", 5)))
             if attention_visualizer.marker_visualizer is None:
@@ -238,7 +239,7 @@ def main():
             policy_output = policy(obs, return_attention=True)
             actions = policy_output["actions"]
             attention_viz_waiting_for_markers = not attention_visualizer.update(
-                policy_output["attention_weights"], obs["map_scans"]
+                policy_output["attention_weights"], policy_nn.get_actor_map_scans(obs)
             )
             if attention_viz_waiting_for_markers:
                 print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
@@ -258,7 +259,9 @@ def main():
             if update_attention:
                 policy_output = policy(obs, return_attention=True)
                 actions = policy_output["actions"]
-                updated = attention_visualizer.update(policy_output["attention_weights"], obs["map_scans"])
+                updated = attention_visualizer.update(
+                    policy_output["attention_weights"], policy_nn.get_actor_map_scans(obs)
+                )
                 if not updated and not attention_viz_waiting_for_markers:
                     print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
                 attention_viz_waiting_for_markers = not updated
