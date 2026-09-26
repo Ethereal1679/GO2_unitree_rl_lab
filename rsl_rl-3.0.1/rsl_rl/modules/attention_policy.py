@@ -34,7 +34,8 @@ class AttentionMapEncoder(nn.Module):
         self.map_shape = map_shape
         self.map_point_dim = map_point_dim
         self.num_map_points = map_shape[0] * map_shape[1]
-
+        
+        # process image
         self.map_cnn = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
@@ -59,17 +60,28 @@ class AttentionMapEncoder(nn.Module):
         )
 
     def _validate(self, map_scans: Tensor, proprioception: Tensor, valid_mask: Tensor | None) -> None:
-        expected_map = (*self.map_shape, self.map_point_dim)
-        if map_scans.ndim != 4 or tuple(map_scans.shape[1:]) != expected_map:
-            raise ValueError(f"map_scans must have shape [B, *{expected_map}], got {tuple(map_scans.shape)}")
+        # Keep these checks TorchScript-compatible.  In particular,
+        # ``tuple(tensor.shape)`` and dynamic tuple expansion cannot be
+        # statically inferred by ``torch.jit.script`` during policy export.
+        if map_scans.ndim != 4:
+            raise ValueError("map_scans must have rank 4: [B, map_h, map_w, point_dim]")
+        if (
+            map_scans.shape[1] != self.map_shape[0]
+            or map_scans.shape[2] != self.map_shape[1]
+            or map_scans.shape[3] != self.map_point_dim
+        ):
+            raise ValueError("map_scans has an unexpected spatial or point dimension")
         if proprioception.ndim != 2:
-            raise ValueError(f"proprioception must have shape [B, D], got {tuple(proprioception.shape)}")
+            raise ValueError("proprioception must have rank 2: [B, D]")
         if map_scans.shape[0] != proprioception.shape[0]:
             raise ValueError("map_scans and proprioception must have the same batch size")
-        if valid_mask is not None and tuple(valid_mask.shape) != (map_scans.shape[0], self.num_map_points):
-            raise ValueError(
-                f"valid_mask must have shape {(map_scans.shape[0], self.num_map_points)}, got {tuple(valid_mask.shape)}"
-            )
+        if valid_mask is not None:
+            if (
+                valid_mask.ndim != 2
+                or valid_mask.shape[0] != map_scans.shape[0]
+                or valid_mask.shape[1] != self.num_map_points
+            ):
+                raise ValueError("valid_mask must have shape [B, num_map_points]")
 
     def split_observation(self, observation: Tensor) -> tuple[Tensor, Tensor]:
         """Split ``[proprioception, map_xyz]`` by the map tail dimension."""
@@ -92,6 +104,55 @@ class AttentionMapEncoder(nn.Module):
             return self.critic_proprioception_encoder(proprioception)
         raise ValueError("role must be 'actor' or 'critic'")
 
+    def _prepare_attention(
+        self,
+        map_scans: Tensor,
+        proprioception: Tensor,
+        valid_mask: Tensor | None,
+        role: str,
+    ) -> tuple[Tensor, Tensor, Tensor | None]:
+        """Build attention inputs shared by the weighted and fast paths."""
+        self._validate(map_scans, proprioception, valid_mask)
+        height = map_scans[..., 2].unsqueeze(1)
+        cnn_features = self.map_cnn(height).permute(0, 2, 3, 1)
+        point_features = torch.cat((cnn_features, map_scans), dim=-1).reshape(
+            map_scans.shape[0], self.num_map_points, self.embedding_dim
+        )
+        query = self._query(proprioception, role).unsqueeze(1)
+
+        if valid_mask is None:
+            key_padding_mask = None
+        else:
+            valid_mask = valid_mask.to(device=map_scans.device, dtype=torch.bool)
+            if (~valid_mask).all(dim=1).any():
+                raise ValueError("each batch item must contain at least one valid map point")
+            key_padding_mask = ~valid_mask
+        return query, point_features, key_padding_mask
+
+    def _attend(
+        self,
+        map_scans: Tensor,
+        proprioception: Tensor,
+        valid_mask: Tensor | None,
+        role: str,
+        return_attention: bool,
+    ) -> tuple[Tensor, Tensor | None]:
+        query, point_features, key_padding_mask = self._prepare_attention(
+            map_scans, proprioception, valid_mask, role
+        )
+        map_encoding, attention_weights = self.cross_attention(
+            query,
+            point_features,
+            point_features,
+            key_padding_mask=key_padding_mask,
+            need_weights=return_attention,
+            # The visualizer consumes one map per attention head.  PyTorch's
+            # default averages the head dimension and changes the result from
+            # [B, heads, 1, points] to [B, 1, points].
+            average_attn_weights=False,
+        )
+        return map_encoding, attention_weights
+
     def forward_with_intermediates(
         self,
         map_scans: Tensor,
@@ -99,32 +160,28 @@ class AttentionMapEncoder(nn.Module):
         valid_mask: Tensor | None = None,
         role: str = "actor",
     ) -> dict[str, Tensor]:
-        self._validate(map_scans, proprioception, valid_mask)
-        height = map_scans[..., 2].unsqueeze(1)
-        cnn_features_nchw = self.map_cnn(height)
-        cnn_features = cnn_features_nchw.permute(0, 2, 3, 1)
-        point_features = torch.cat((cnn_features, map_scans), dim=-1).reshape(
-            map_scans.shape[0], self.num_map_points, self.embedding_dim
+        """Compatibility/debug path returning the complete attention pipeline."""
+
+        query, point_features, key_padding_mask = self._prepare_attention(
+            map_scans, proprioception, valid_mask, role
         )
-        query = self._query(proprioception, role).unsqueeze(1)
-        key_padding_mask = None
-        if valid_mask is not None:
-            valid_mask = valid_mask.to(device=map_scans.device, dtype=torch.bool)
-            if (~valid_mask).all(dim=1).any():
-                raise ValueError("each batch item must contain at least one valid map point")
-            key_padding_mask = ~valid_mask
-        # import ipdb; ipdb.set_trace()
         map_encoding, attention_weights = self.cross_attention(
-            query=query,
-            key=point_features,
-            value=point_features,
+            query,
+            point_features,
+            point_features,
             key_padding_mask=key_padding_mask,
             need_weights=True,
             average_attn_weights=False,
         )
+        assert attention_weights is not None
+        height = map_scans[..., 2].unsqueeze(1)
+        cnn_features_nchw = point_features[..., : self.embedding_dim - self.map_point_dim]
+        cnn_features = cnn_features_nchw.reshape(
+            map_scans.shape[0], self.map_shape[0], self.map_shape[1], -1
+        )
         return {
             "height": height,
-            "cnn_features_nchw": cnn_features_nchw,
+            "cnn_features_nchw": cnn_features.permute(0, 3, 1, 2),
             "cnn_features": cnn_features,
             "point_features": point_features,
             "query": query,
@@ -142,11 +199,10 @@ class AttentionMapEncoder(nn.Module):
         if proprioception.shape[-1] != expected_dim:
             raise ValueError("proprioception dimension does not match the configured role")
         if return_attention:
-            output = self.forward_with_intermediates(map_scans, proprioception, role=role)
-            return output["map_encoding"].flatten(start_dim=1), output["attention_weights"], proprioception
+            map_encoding, attention = self(map_scans, proprioception, role=role)
+            return map_encoding.flatten(start_dim=1), attention, proprioception
         return self.encode(map_scans, proprioception, role=role).flatten(start_dim=1), None, proprioception
 
-    # play ffp
     def forward(
         self,
         map_scans: Tensor,
@@ -154,26 +210,12 @@ class AttentionMapEncoder(nn.Module):
         valid_mask: Tensor | None = None,
         role: str = "actor",
     ) -> tuple[Tensor, Tensor]:
-        height = map_scans[..., 2].unsqueeze(1)
-        cnn_features = self.map_cnn(height).permute(0, 2, 3, 1)
-        point_features = torch.cat((cnn_features, map_scans), dim=-1).reshape(
-            map_scans.shape[0], self.num_map_points, self.embedding_dim
-        )
-        query = self._query(proprioception, role).unsqueeze(1)
-        key_padding_mask = None if valid_mask is None else ~valid_mask.to(dtype=torch.bool)
-        # import ipdb; ipdb.set_trace()
-        map_encoding, attention_weights = self.cross_attention(
-            query,
-            point_features,
-            point_features,
-            key_padding_mask=key_padding_mask,
-            need_weights=True,
-            average_attn_weights=False,
+        map_encoding, attention_weights = self._attend(
+            map_scans, proprioception, valid_mask, role, return_attention=True
         )
         assert attention_weights is not None
         return map_encoding, attention_weights
 
-    # train ffp, donot return attention weights
     def encode(
         self,
         map_scans: Tensor,
@@ -182,21 +224,8 @@ class AttentionMapEncoder(nn.Module):
         role: str = "actor",
     ) -> Tensor:
         """Encode the map without materializing per-head attention weights."""
-
-        height = map_scans[..., 2].unsqueeze(1) # torch.Size([2048, 1, 16, 11])
-        cnn_features = self.map_cnn(height).permute(0, 2, 3, 1) # torch.Size([2048, 16, 11, 61])
-        point_features = torch.cat((cnn_features, map_scans), dim=-1).reshape(
-            map_scans.shape[0], self.num_map_points, self.embedding_dim
-        ) # torch.Size([2048, 176, 64])
-        query = self._query(proprioception, role).unsqueeze(1) # torch.Size([2048, 1, 64])
-        key_padding_mask = None if valid_mask is None else ~valid_mask.to(dtype=torch.bool)
-        # import ipdb; ipdb.set_trace()
-        map_encoding, _ = self.cross_attention( # torch.Size([2048, 1, 64])
-            query,
-            point_features,
-            point_features,
-            key_padding_mask=key_padding_mask,
-            need_weights=False,
+        map_encoding, _ = self._attend(
+            map_scans, proprioception, valid_mask, role, return_attention=False
         )
         return map_encoding
 
@@ -235,33 +264,17 @@ class Go2AttentionPolicy(nn.Module):
         valid_mask: Tensor | None = None,
         return_attention: bool = False,
     ) -> dict[str, Tensor]:
-        output = self.forward_with_intermediates(map_scans, proprioception, valid_mask)
         if return_attention:
-            return {
-                "actions": output["actions"],
-                "attention_weights": output["attention_weights"],
-            }
-        return {
-            "actions": output["actions"],
-            "map_encoding": output["map_encoding"],
-            "attention_weights": output["attention_weights"],
-        }
-
-    def forward_with_intermediates(
-        self,
-        map_scans: Tensor,
-        proprioception: Tensor,
-        valid_mask: Tensor | None = None,
-    ) -> dict[str, Tensor]:
-        output = self.map_encoder.forward_with_intermediates(map_scans, proprioception, valid_mask)
-        map_encoding_flat = output["map_encoding"].flatten(start_dim=1)
-        policy_input = torch.cat((map_encoding_flat, proprioception), dim=-1)
-        return {
-            **output,
-            "map_encoding_flat": map_encoding_flat,
-            "policy_input": policy_input,
-            "actions": self.policy_mlp(policy_input),
-        }
+            map_encoding, attention = self.map_encoder(map_scans, proprioception, valid_mask)
+        else:
+            map_encoding = self.map_encoder.encode(map_scans, proprioception, valid_mask)
+            attention = None
+        policy_input = torch.cat((map_encoding.flatten(start_dim=1), proprioception), dim=-1)
+        actions = self.policy_mlp(policy_input)
+        if return_attention:
+            assert attention is not None
+            return {"actions": actions, "attention_weights": attention}
+        return {"actions": actions, "map_encoding": map_encoding}
 
 
 class AttentionMapActor(nn.Module):
@@ -317,7 +330,6 @@ class AttentionMapActor(nn.Module):
 
     def forward_with_attention(self, actor_input: Tensor) -> dict[str, Tensor]:
         """Run the actor while returning its per-head cross-attention weights."""
-
         proprioception, map_scans = self.map_encoder.split_observation(actor_input)
         map_encoding, attention_weights = self.map_encoder(map_scans, proprioception)
         self.last_attention_weights = attention_weights.detach()

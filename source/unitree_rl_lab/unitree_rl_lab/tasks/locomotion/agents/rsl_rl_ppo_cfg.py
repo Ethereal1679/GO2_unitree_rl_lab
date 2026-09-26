@@ -46,6 +46,7 @@ class RslRlPpoAttentionActorCriticCfg(RslRlPpoActorCriticCfg):
     num_heads: int = 16
     map_shape: tuple[int, int] = (16, 11)
     return_attention_weights: bool = False
+    use_actor_att_map_for_critic: bool = True # critic不遵从原始论文的方法从critic重新编码一次地图，而是复用actor的编码的地图
     attention_visualization: AttentionVisualizationCfg = AttentionVisualizationCfg()
 
 
@@ -53,8 +54,8 @@ class RslRlPpoAttentionActorCriticCfg(RslRlPpoActorCriticCfg):
 class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     obs_groups = {"policy": ["policy"], "critic": ["critic"]}
-    max_iterations = 50000
-    save_interval = 500
+    max_iterations = 999999999999
+    save_interval = 200
     experiment_name = ""  # same as task name
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
@@ -69,7 +70,7 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         use_clipped_value_loss=True,
         clip_param=0.2,
         entropy_coef=0.01,
-        num_learning_epochs=3, #5, # TODO 不知道会不会很大影响
+        num_learning_epochs=5, # TODO 不知道会不会很大影响
         num_mini_batches=4,
         learning_rate=1.0e-3,
         schedule="adaptive",
@@ -80,6 +81,7 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
 
+# ========= VAE ==========
 @configclass
 class Go2VAERunnerCfg(BasePPORunnerCfg):
     """Go2 PPO runner using the height-map VAE actor."""
@@ -95,6 +97,7 @@ class Go2VAERunnerCfg(BasePPORunnerCfg):
     )
 
 
+# ========= MHA ==========
 @configclass
 class Go2AttentionRunnerCfg(BasePPORunnerCfg):
     """Go2 PPO runner using the height-map cross-attention actor."""
@@ -107,7 +110,8 @@ class Go2AttentionRunnerCfg(BasePPORunnerCfg):
         actor_hidden_dims=[256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
-        embedding_dim=64,
-        num_heads=16,
+        embedding_dim=16,
+        num_heads=4,
         map_shape=(16, 11),
+        noise_std_type="scalar", # TODO 找一下为什么会出现std为负数的情况(已解决，height scan出现NAN)
     )

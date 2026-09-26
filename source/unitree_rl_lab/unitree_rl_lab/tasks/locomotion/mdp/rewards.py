@@ -8,7 +8,7 @@ try:
 except ImportError:
     from isaaclab.utils.math import quat_rotate_inverse as quat_apply_inverse
 from isaaclab.assets import Articulation, RigidObject
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.sensors import ContactSensor
 
 if TYPE_CHECKING:
@@ -26,6 +26,93 @@ def energy(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("r
     qvel = asset.data.joint_vel[:, asset_cfg.joint_ids]
     qfrc = asset.data.applied_torque[:, asset_cfg.joint_ids]
     return torch.sum(torch.abs(qvel) * torch.abs(qfrc), dim=-1)
+
+
+class FootGapStuckPenalty(ManagerTermBase):
+    """Penalize feet that drop below nearby terrain while the robot is stuck.
+
+    The height scanner supplies the local support height.  A foot is considered
+    to be in a gap when it is substantially below the highest valid scan point
+    in a small neighborhood around that foot.  The condition must persist while
+    a non-zero command is active and the base is nearly stationary before the
+    penalty ramps up.  This avoids penalizing ordinary swing phases and brief
+    pauses used to negotiate an obstacle.
+    """
+
+    def __init__(self, cfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.stuck_time = torch.zeros(env.num_envs, device=env.device)
+
+    def reset(self, env_ids=None):
+        if env_ids is None:
+            self.stuck_time.zero_()
+        else:
+            self.stuck_time[env_ids] = 0.0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        sensor_cfg: SceneEntityCfg,
+        asset_cfg: SceneEntityCfg,
+        command_name: str = "base_velocity",
+        support_radius: float = 0.30,
+        foot_drop_threshold: float = 0.12,
+        foot_drop_scale: float = 0.20,
+        min_command_speed: float = 0.25,
+        max_body_speed: float = 0.08,
+        trigger_time: float = 1.0,
+    ) -> torch.Tensor:
+        sensor = env.scene.sensors[sensor_cfg.name]
+        asset = env.scene[asset_cfg.name]
+
+        foot_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids, :]
+        ray_hits_w = sensor.data.ray_hits_w
+
+        # Find valid scan points close to every foot.  Invalid ray hits are
+        # ignored instead of being treated as a very deep hole.
+        valid_rays = torch.isfinite(ray_hits_w).all(dim=-1)
+        ray_xy = torch.nan_to_num(ray_hits_w[..., :2], nan=0.0)
+        foot_xy = foot_pos_w[..., :2]
+        distances_sq = torch.sum(
+            (foot_xy.unsqueeze(2) - ray_xy.unsqueeze(1)) ** 2,
+            dim=-1,
+        )
+        nearby_valid = (distances_sq <= support_radius**2) & valid_rays.unsqueeze(1)
+
+        ray_height = ray_hits_w[..., 2].unsqueeze(1)
+        invalid_height = torch.full_like(ray_height, -torch.inf)
+        local_support_height = torch.where(nearby_valid, ray_height, invalid_height).amax(dim=-1)
+        has_support = nearby_valid.any(dim=-1)
+        # If no valid scan point is nearby (for example at the edge of the
+        # scan), do not infer a gap from incomplete sensor coverage.
+        local_support_height = torch.where(
+            has_support,
+            local_support_height,
+            foot_pos_w[..., 2],
+        )
+
+        foot_drop = (local_support_height - foot_pos_w[..., 2]).clamp_min(0.0)
+        foot_gap_severity = (
+            (foot_drop - foot_drop_threshold) / max(foot_drop_scale, 1.0e-6)
+        ).clamp(0.0, 1.0)
+        foot_in_gap = foot_gap_severity.max(dim=1).values
+
+        command = env.command_manager.get_command(command_name)[:, :2]
+        command_speed = torch.linalg.norm(command, dim=1)
+        body_speed = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
+        is_stuck = (
+            (command_speed > min_command_speed)
+            & (body_speed < max_body_speed)
+            & (foot_in_gap > 0.0)
+        )
+
+        self.stuck_time = torch.where(
+            is_stuck,
+            (self.stuck_time + env.step_dt).clamp(max=trigger_time),
+            torch.zeros_like(self.stuck_time),
+        )
+        delay_factor = (self.stuck_time / max(trigger_time, 1.0e-6)).clamp(0.0, 1.0)
+        return delay_factor * foot_in_gap
 
 
 def stand_still(

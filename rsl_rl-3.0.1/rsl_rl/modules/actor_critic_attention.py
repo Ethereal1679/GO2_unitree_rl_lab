@@ -62,6 +62,7 @@ class AttentionMapActorCritic(nn.Module):
         map_shape: tuple[int, int] = (26, 16),
         return_attention_weights: bool = False,
         attention_visualization=None,
+        use_actor_att_map_for_critic: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -104,6 +105,9 @@ class AttentionMapActorCritic(nn.Module):
         self.critic_obs_normalizer = (
             EmpiricalNormalization(critic_obs.shape[-1]) if critic_obs_normalization else nn.Identity()
         )
+        self.use_actor_att_map_for_critic = use_actor_att_map_for_critic
+        self._cached_actor_obs = None
+        self._cached_actor_map_encoding = None
         self.register_buffer("last_attention_weights", torch.empty(0), persistent=False)
         print(f"Attention encoder: {self.encoder}")
         print(f"Attention actor: {self.actor}")
@@ -170,6 +174,9 @@ class AttentionMapActorCritic(nn.Module):
     def update_distribution(self, obs):
         actor_obs = self.actor_obs_normalizer(self.get_actor_obs(obs))
         map_encoding, _, proprioception = self.encoder.forward_observation(actor_obs, role="actor")
+        if self.use_actor_att_map_for_critic:
+            self._cached_actor_obs = obs
+            self._cached_actor_map_encoding = map_encoding
         mean = self.actor.mlp(torch.cat((map_encoding, proprioception), dim=-1))
         if self.noise_std_type == "scalar":
             std = self.std.expand_as(mean)
@@ -192,6 +199,20 @@ class AttentionMapActorCritic(nn.Module):
 
     def evaluate(self, obs, **kwargs):
         critic_obs = self.critic_obs_normalizer(self.get_critic_obs(obs))
+        if self.use_actor_att_map_for_critic:
+            if obs is self._cached_actor_obs:
+                map_encoding = self._cached_actor_map_encoding.detach()
+            else:
+                actor_obs = self.actor_obs_normalizer(self.get_actor_obs(obs))
+                map_encoding, _, _ = self.encoder.forward_observation(actor_obs, role="actor")
+                map_encoding = map_encoding.detach()
+            # A cached encoding is valid for exactly one act/evaluate pair.
+            # Clearing it prevents a mutable observation container from
+            # accidentally reusing a previous step's map during bootstrapping.
+            self._cached_actor_obs = None
+            self._cached_actor_map_encoding = None
+            proprioception, _ = self.encoder.split_observation(critic_obs)
+            return self.critic(torch.cat((map_encoding, proprioception), dim=-1))
         map_encoding, _, proprioception = self.encoder.forward_observation(critic_obs, role="critic")
         return self.critic(torch.cat((map_encoding, proprioception), dim=-1))
 

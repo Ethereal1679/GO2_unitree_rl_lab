@@ -16,77 +16,10 @@ from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-
 from unitree_rl_lab.assets.robots.unitree import UNITREE_GO2_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
-from unitree_rl_lab.tasks.locomotion.mdp.terrains import (
-    CourageGapsTerrainCfg,
-    ModularPillarTerrainCfg,
-)
-
-
-COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
-    size=(12.0, 12.0),
-    border_width=20.0,
-    num_rows=10,
-    num_cols=20,
-    horizontal_scale=0.1,
-    vertical_scale=0.005,
-    slope_threshold=0.75,
-    difficulty_range=(0.0, 1.0),
-    use_cache=False,
-    sub_terrains={
-        # "flat": terrain_gen.MeshPlaneTerrainCfg(
-        #     proportion=0.1,
-        # ),
-        "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
-            proportion=0.2, noise_range=(0.01, 0.06), noise_step=0.01, border_width=0.25
-        ),
-        "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
-            proportion=0.1, slope_range=(0.0, 0.4), platform_width=2.0, border_width=0.25
-        ),
-        "hf_pyramid_slope_inv": terrain_gen.HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.1, slope_range=(0.0, 0.4), platform_width=2.0, border_width=0.25
-        ),
-        "boxes": terrain_gen.MeshRandomGridTerrainCfg(
-            proportion=0.2, grid_width=0.45, grid_height_range=(0.05, 0.2), platform_width=2.0
-        ),
-        "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
-            proportion=0.1,
-            step_height_range=(0.05, 0.15),
-            step_width=0.3,
-            platform_width=3.0,
-            border_width=1.0,
-            holes=False,
-        ),
-        "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
-            proportion=0.1,
-            step_height_range=(0.05, 0.15),
-            step_width=0.3,
-            platform_width=3.0,
-            border_width=1.0,
-            holes=False,
-        ),
-        "courage_gaps": CourageGapsTerrainCfg(
-            proportion=0.2,
-            num_gaps = 5,
-            gap_width_range = (0.15, 0.55),
-            gap_spacing_range = (0.8, 0.45),
-            gap_depth_range = (0.5, 0.55),
-        ),
-        # "finetuned_courage_pillars": ModularPillarTerrainCfg(
-        #     proportion=0.2,
-        #     pillar_size=0.4,
-        #     grid_spacing=1.0,
-        #     dense_grid_spacing=0.6,
-        #     pillar_height_range=(2.0, 2.0),
-        #     platform_size=4.0,
-        #     border_width=1.0,
-        #     platform_height=0.0,
-        #     random_seed=114514,
-        # ),
-    },
-)
+from unitree_rl_lab.tasks.locomotion.terrains.terrains_generator_cfg import COMPLEX_RANDOM_CFG
+from unitree_rl_lab.tasks.locomotion.terrains.height_scan_visualization import HEIGHT_SCAN_MARKER_CFG
 
 
 @configclass
@@ -130,7 +63,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         ),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
-        visualizer_cfg=mdp.HEIGHT_SCAN_MARKER_CFG,
+        visualizer_cfg=HEIGHT_SCAN_MARKER_CFG,
     )
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
     # lights
@@ -228,15 +161,16 @@ class CommandsCfg:
         heading_control_stiffness=0.5,
         debug_vis=True,
         ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.5, 1.0), 
-            lin_vel_y=(-0.5, 0.5), 
+            lin_vel_x=(-0.2, 1.0),
+            lin_vel_y=(-0.2, 0.2),
             ang_vel_z=(-1.0, 1.0),
             heading=(-math.pi, math.pi)
         ),
         limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
             lin_vel_x=(-1.0, 1.0), 
-            lin_vel_y=(-0.4, 0.4), 
-            ang_vel_z=(-1.0, 1.0)
+            lin_vel_y=(-0.5, 0.5),
+            ang_vel_z=(-1.0, 1.0),
+            heading=(-math.pi, math.pi),
         ),
     )
 
@@ -319,7 +253,7 @@ class RewardsCfg:
     """Reward terms for the MDP."""
 
     # -- task
-    track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
+    track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.2)})
     track_ang_vel_z = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=1.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
     # -- base
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
@@ -337,9 +271,22 @@ class RewardsCfg:
     joint_position_penalty = RewTerm(func=mdp.joint_position_penalty, weight=-0.5, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*"),"stand_still_scale": 5.0,"velocity_threshold": 0.3,},)
     feet_slide = RewTerm(func=mdp.feet_slide,weight=-0.1, params={"asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),},)
     feet_air_time = RewTerm(func=mdp.feet_air_time,weight=0.1, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),"command_name": "base_velocity","threshold": 0.5,},)
-    air_time_variance_penalty = RewTerm(func=mdp.air_time_variance_penalty, weight=-1.0, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},)
+    # air_time_variance_penalty = RewTerm(func=mdp.air_time_variance_penalty, weight=-1.0, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts, weight=-1.0, params={"threshold": 1, "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["Head_.*", ".*_hip", ".*_thigh", ".*_calf"]),},)
     feet_stumble = RewTerm(func=mdp.feet_stumble,weight=-1.0,params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),},) 
+    # foot_gap_stuck = RewTerm(func=mdp.FootGapStuckPenalty, weight=-2.0,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("height_scanner"),
+    #         "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+    #         "command_name": "base_velocity",
+    #         "support_radius": 0.30,
+    #         "foot_drop_threshold": 0.1,
+    #         "foot_drop_scale": 0.20,
+    #         "min_command_speed": 0.25,
+    #         "max_body_speed": 0.08,
+    #         "trigger_time": 2.0,
+    #     },
+    # )
 
 
     # feet_contact_forces = RewTerm(
@@ -359,8 +306,8 @@ class TerminationsCfg:
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_contact = DoneTerm(func=mdp.illegal_contact, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"), "threshold": 1.0},)
-    # bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.8})
-
+    # bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.707}) # 45 degrees
+    # base_height = DoneTerm(func=mdp.root_height_below_minimum,params={"minimum_height": 0.16,"asset_cfg": SceneEntityCfg("robot"),},)
 
 @configclass
 class CurriculumCfg:
@@ -424,11 +371,9 @@ class RobotPlayEnvCfg(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 32
-        self.scene.terrain.terrain_generator.num_rows = 8
+        self.scene.terrain.terrain_generator.num_rows = 10
         # Keep at least one curriculum column for every configured terrain type.
-        self.scene.terrain.terrain_generator.num_cols = max(
-            5, len(self.scene.terrain.terrain_generator.sub_terrains)
-        )
+        self.scene.terrain.terrain_generator.num_cols = max(5, len(self.scene.terrain.terrain_generator.sub_terrains))
         self.scene.height_scanner.debug_vis = True # 开启调试可视化
         self.commands.base_velocity.debug_vis = True # 开启调试可视化
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges

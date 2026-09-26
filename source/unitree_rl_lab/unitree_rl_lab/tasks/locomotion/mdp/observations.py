@@ -118,6 +118,10 @@ def map_scan_points(
     relative_hits_w = ray_hits_w - asset.data.root_pos_w.unsqueeze(1)
     root_quat_w = asset.data.root_quat_w.unsqueeze(1).expand(-1, ray_hits_w.shape[1], -1)
     ray_hits_b = quat_apply_inverse(root_quat_w, relative_hits_w)
+    # 命中点现在会被替换成有限坐标，并将高度设为扫描下限
+    invalid_points = ~torch.isfinite(ray_hits_b).all(dim=-1)
+    ray_hits_b = torch.nan_to_num(ray_hits_b, nan=0.0, posinf=0.0, neginf=0.0)
+    ray_hits_b[..., 2] = torch.where(invalid_points, torch.full_like(ray_hits_b[..., 2], -1.2), ray_hits_b[..., 2])
     expected_points = grid_shape[0] * grid_shape[1]
     if ray_hits_b.shape[1] != expected_points:
         raise RuntimeError(f"Expected {expected_points} map points for grid {grid_shape}, got {ray_hits_b.shape[1]}")
