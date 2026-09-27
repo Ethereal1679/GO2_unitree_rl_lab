@@ -371,7 +371,7 @@ class RobotPlayEnvCfg(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 32
-        self.scene.terrain.terrain_generator.num_rows = 10
+        self.scene.terrain.terrain_generator.num_rows = 15
         # Keep at least one curriculum column for every configured terrain type.
         self.scene.terrain.terrain_generator.num_cols = max(5, len(self.scene.terrain.terrain_generator.sub_terrains))
         self.scene.height_scanner.debug_vis = True # 开启调试可视化

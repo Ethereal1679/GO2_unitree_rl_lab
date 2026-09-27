@@ -56,14 +56,23 @@ def _make_square_annulus(
 
 # == gap地形，来源 https://github.com/SII-FUSC/AME_Locomotion
 
+def _resolve_depth(depth: float | tuple[float, float], difficulty: float) -> float:
+    """Resolve a fixed depth or a curriculum range in meters."""
+    if isinstance(depth, (tuple, list)):
+        if len(depth) != 2:
+            raise ValueError(f"depth range must contain exactly two values, got {depth}")
+        return float(depth[0]) + float(difficulty) * (float(depth[1]) - float(depth[0]))
+    return float(depth)
+
 @height_field_to_mesh
 def concentric_gap_terrain(difficulty: float, cfg: HfConcentricGapTerrainCfg) -> np.ndarray:
     """
     Generate concentric gap terrain with a center platform.
-    Gap width is difficulty-dependent and gap depth is fixed.
+    Gap width and depth can both vary with curriculum difficulty.
     """
-    # Gap depth in pixels
-    gap_depth = int(2.0 / cfg.vertical_scale)
+    # Gap depth varies with curriculum difficulty. The height field stores
+    # negative obstacle heights directly, e.g. (-0.5, -3.0) meters.
+    gap_depth = int(round(_resolve_depth(cfg.gap_depth, difficulty) / cfg.vertical_scale))
     # Gap width varies with difficulty
     gap_width = cfg.gap_width_range[0] + difficulty * (cfg.gap_width_range[1] - cfg.gap_width_range[0])
     gap_width = int(gap_width / cfg.horizontal_scale)
@@ -85,7 +94,7 @@ def concentric_gap_terrain(difficulty: float, cfg: HfConcentricGapTerrainCfg) ->
     while (stop_x - start_x) > platform_width and (stop_y - start_y) > platform_width:
         if is_gap:
             # Fill gap ring
-            hf_raw[start_x:stop_x, start_y:stop_y] = -gap_depth
+            hf_raw[start_x:stop_x, start_y:stop_y] = gap_depth
             start_x += gap_width
             stop_x -= gap_width
             start_y += gap_width
@@ -119,8 +128,8 @@ class HfConcentricGapTerrainCfg(HfTerrainBaseCfg):
     """The minimum and maximum width of the ground (in m)."""
     ground_height_max: float = MISSING
     """The maximum height of the ground (in m)."""
-    gap_depth: float = -2.0
-    """The depth of the gaps (negative obstacles). Defaults to -2.0."""
+    gap_depth: float | tuple[float, float] = -2.0
+    """Gap depth in meters, or its ``(easy, hard)`` curriculum range."""
     platform_width: float = 1.0
     """The width of the square platform at the center of the terrain. Defaults to 1.0."""
 
@@ -161,8 +170,8 @@ def stepping_stones_terrain(difficulty: float, cfg: HfSteppingStonesTerrainCfg) 
     stone_distance = int(stone_distance / cfg.horizontal_scale)
     stone_width = int(stone_width / cfg.horizontal_scale)
     stone_height_max = int(cfg.stone_height_max / cfg.vertical_scale)
-    # -- holes
-    holes_depth = int(cfg.holes_depth / cfg.vertical_scale)
+    # -- holes: support either a fixed depth or an (easy, hard) range.
+    holes_depth = int(round(_resolve_depth(cfg.holes_depth, difficulty) / cfg.vertical_scale))
     # -- platform
     platform_width = int(cfg.platform_width / cfg.horizontal_scale)
     # create range of heights
@@ -231,8 +240,8 @@ class HfSteppingStonesTerrainCfg(HfTerrainBaseCfg):
     stone_distance_range: tuple[float, float] = MISSING
     """The minimum and maximum distance between stones (in m)."""
 
-    holes_depth: float = -10.0
-    """The depth of the holes (negative obstacles). Defaults to -10.0."""
+    holes_depth: float | tuple[float, float] = -10.0
+    """Hole depth in meters, or its ``(easy, hard)`` curriculum range."""
 
     platform_width: float = 1.0
     """The width of the square platform at the center of the terrain. Defaults to 1.0."""

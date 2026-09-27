@@ -70,12 +70,13 @@ COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
         #     holes=False,
         # ),
         "hf_gaps": HfConcentricGapTerrainCfg(
-            proportion=0.2, gap_width_range=(0.1, 0.3), platform_width=1.0, border_width=0.5, gap_depth=-0.0,
+            proportion=0.2, gap_width_range=(0.1, 0.3), platform_width=2.0, border_width=0.5,
+            gap_depth=(-0.1, -2.0),
             ground_width_range=(0.5, 0.5), ground_height_max=0.025
         ),
         "hf_steppingstones": HfSteppingStonesTerrainCfg(
-            proportion=0.2, stone_height_max=0.05, stone_width_range=(0.25, 0.5), stone_distance_range=(0.1, 0.2), platform_width=1.0,
-            holes_depth=-0.0, border_width=0.5
+            proportion=0.2, stone_height_max=0.05, stone_width_range=(0.25, 0.5), stone_distance_range=(0.1, 0.2), platform_width=2.0,
+            holes_depth=(-0.1, -2.0), border_width=0.5
         ),
     },
 )
