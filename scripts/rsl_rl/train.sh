@@ -6,8 +6,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 python "${SCRIPT_DIR}/py/train.py" \
     --task go2_att \
     --logger tensorboard \
-    --num_envs 4096 \
-    --run_name "no_resume-16dim_4head" \
+    --num_envs 2048 \
+    --run_name "16dim_4head" \
     --max_iterations 99999999 \
     --headless \
     # --resume \

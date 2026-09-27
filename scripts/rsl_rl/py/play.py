@@ -203,19 +203,20 @@ def main():
 
         attention_viz_cfg = getattr(agent_cfg.policy, "attention_visualization", None)
         attention_viz_enabled = bool(getattr(attention_viz_cfg, "enabled", True))
-        # 修改可视化env id，从而观测不同地形的效果
+        # None visualizes all environments.
+        # NOTE env_id=None for all envs. env_id=xxx for simgle env.
         if attention_viz_enabled:
             attention_visualizer = HeightScanAttentionVisualizer(
                 env,
                 attention_viz_cfg,
-                env_id=30,
+                env_id=None,
             )
             interval = max(1, int(getattr(attention_viz_cfg, "update_interval", 5)))
             if attention_visualizer.marker_visualizer is None:
                 print("[WARNING] Existing RayCaster height-scan visualizer is unavailable; visualization disabled.")
                 attention_viz_enabled = False
             else:
-                print(f"[INFO] Height-scan attention visualization enabled (env_id=0, interval={interval}).")
+                print(f"[INFO] Height-scan attention visualization enabled (all envs, interval={interval}).")
     elif args_cli.attention_enable_viz:
         print("[WARNING] --attention_enable_viz requires the AttentionMapActorCritic policy; visualization disabled.")
 

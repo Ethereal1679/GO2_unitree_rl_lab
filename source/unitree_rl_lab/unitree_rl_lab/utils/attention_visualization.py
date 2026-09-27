@@ -16,11 +16,11 @@ class HeightScanAttentionVisualizer:
     RayCaster remains the owner of the point locations and point ordering.
     """
 
-    def __init__(self, env: Any, cfg: Any, sensor_name: str = "height_scanner", env_id: int = 0):
+    def __init__(self, env: Any, cfg: Any, sensor_name: str = "height_scanner", env_id: int | None = 0):
         self.env = getattr(env, "unwrapped", env)
         self.cfg = cfg
         self.sensor = self.env.scene.sensors[sensor_name]
-        self.env_id = int(env_id)
+        self.env_id = None if env_id is None else int(env_id)
         self._colors: np.ndarray | None = None
         self._opacity: np.ndarray | None = None
         self._color_attr = None
@@ -132,14 +132,16 @@ class HeightScanAttentionVisualizer:
         return ~torch.any(torch.isinf(ray_hits_w), dim=-1)
 
     def update(self, attention_weights: torch.Tensor, map_scans: torch.Tensor) -> bool:
-        """Batch-update colors for the selected environment's existing points."""
+        """Batch-update colors for the selected environment(s)' existing points."""
 
         visualizer = self.marker_visualizer
         if visualizer is None or attention_weights is None:
             return False
         if attention_weights.ndim != 4 or map_scans.ndim != 4:
             return False
-        if self.env_id >= attention_weights.shape[0] or self.env_id >= map_scans.shape[0]:
+        if self.env_id is not None and (
+            self.env_id >= attention_weights.shape[0] or self.env_id >= map_scans.shape[0]
+        ):
             return False
 
         aggregation = str(self._cfg_value(self.cfg, "aggregation", "mean")).lower()
@@ -155,13 +157,6 @@ class HeightScanAttentionVisualizer:
             raise ValueError(
                 f"Attention length {attention.shape[-1]} does not match height scan shape {(height, width)}"
             )
-        attention = attention.reshape(attention.shape[0], height, width)[self.env_id]
-        valid_mask = torch.isfinite(map_scans[self.env_id]).all(dim=-1)
-        # Rank raw finite attention values so percentile clipping cannot make
-        # many points tie at the same color.
-        finite_mask = torch.isfinite(attention) & valid_mask
-        colors = self._top_attention_colors(attention, finite_mask)
-
         marker_valid = self._marker_valid_mask()
         if marker_valid.shape[0] != map_scans.shape[0] or marker_valid.shape[1] != height * width:
             raise ValueError(
@@ -176,27 +171,31 @@ class HeightScanAttentionVisualizer:
             # until its existing buffer has the matching point count.
             return False
 
-        flat_valid = marker_valid.reshape(-1)
-        points_per_env = height * width
-        start = self.env_id * points_per_env
-        stop = start + points_per_env
-        selected_mask = flat_valid[start:stop]
-        selected_indices = torch.nonzero(selected_mask, as_tuple=False).squeeze(-1)
-        offset = flat_valid[:start].sum()
-        selected_indices = (selected_indices + offset).detach().cpu().numpy()
-
         self._ensure_primvars(visualizer.count)
         assert self._colors is not None and self._opacity is not None
-        selected_colors = colors[selected_mask]
-        self._colors[selected_indices] = selected_colors.detach().cpu().numpy().astype(np.float32, copy=False)
+        all_attention = attention.reshape(attention.shape[0], height, width)
+        env_ids = range(map_scans.shape[0]) if self.env_id is None else (self.env_id,)
         show_invalid = bool(self._cfg_value(self.cfg, "show_invalid_points", False))
-        selected_finite_mask = finite_mask.reshape(-1)[selected_mask]
-        selected_opacity = torch.ones(
-            selected_finite_mask.shape, device=selected_finite_mask.device, dtype=torch.float32
-        )
-        if not show_invalid:
-            selected_opacity = selected_opacity * selected_finite_mask.float()
-        self._opacity[selected_indices] = selected_opacity.detach().cpu().numpy().astype(np.float32, copy=False)
+        for env_id in env_ids:
+            attention_env = all_attention[env_id]
+            valid_mask = torch.isfinite(map_scans[env_id]).all(dim=-1)
+            # Rank raw finite attention values so percentile clipping cannot make
+            # many points tie at the same color.
+            finite_mask = torch.isfinite(attention_env) & valid_mask
+            colors = self._top_attention_colors(attention_env, finite_mask)
+            selected_mask = marker_valid[env_id]
+            selected_indices = torch.nonzero(selected_mask, as_tuple=False).squeeze(-1)
+            offset = int(marker_valid[:env_id].sum().item())
+            selected_indices = (selected_indices + offset).detach().cpu().numpy()
+            selected_colors = colors[selected_mask]
+            self._colors[selected_indices] = selected_colors.detach().cpu().numpy().astype(np.float32, copy=False)
+            selected_finite_mask = finite_mask.reshape(-1)[selected_mask]
+            selected_opacity = torch.ones(
+                selected_finite_mask.shape, device=selected_finite_mask.device, dtype=torch.float32
+            )
+            if not show_invalid:
+                selected_opacity = selected_opacity * selected_finite_mask.float()
+            self._opacity[selected_indices] = selected_opacity.detach().cpu().numpy().astype(np.float32, copy=False)
         self._color_attr.Set(Vt.Vec3fArray.FromNumpy(self._colors))
         self._opacity_attr.Set(Vt.FloatArray.FromNumpy(self._opacity))
         return True

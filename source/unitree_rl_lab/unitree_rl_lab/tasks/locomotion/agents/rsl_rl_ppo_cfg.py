@@ -110,8 +110,8 @@ class Go2AttentionRunnerCfg(BasePPORunnerCfg):
         actor_hidden_dims=[256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
-        embedding_dim=16,
-        num_heads=4,
+        embedding_dim=32,
+        num_heads=8,
         map_shape=(16, 11),
         noise_std_type="scalar", # TODO 找一下为什么会出现std为负数的情况(已解决，height scan出现NAN)
     )
