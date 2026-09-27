@@ -47,6 +47,12 @@ parser.add_argument(
     default=False,
     help="Color the existing height-scan markers from policy attention weights.",
 )
+parser.add_argument(
+    "--gap_gas_enable_viz",
+    action="store_true",
+    default=False,
+    help="Show non-colliding green gap volumes in play mode.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -162,6 +168,16 @@ def main():
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
+    gap_gas_visualizer = None
+    if args_cli.gap_gas_enable_viz:
+        from unitree_rl_lab.tasks.locomotion.terrains.penalty_gap_gas import (
+            GapGasVisualizer,
+            ray_gap_gas_boxes,
+        )
+
+        gap_gas_visualizer = GapGasVisualizer(enabled=True)
+        gap_gas_cell_size = float(env_cfg.scene.height_scanner.pattern_cfg.resolution)
+
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     if not hasattr(agent_cfg, "class_name") or agent_cfg.class_name == "OnPolicyRunner":
@@ -234,6 +250,9 @@ def main():
     obs = env.get_observations()
     timestep = 0
     attention_step = 0
+    if gap_gas_visualizer is not None:
+        sensor = env.unwrapped.scene.sensors["height_scanner"]
+        gap_gas_visualizer.visualize(ray_gap_gas_boxes(sensor.data.ray_hits_w, gap_gas_cell_size))
     # simulate environment
     with torch.inference_mode():
         if attention_viz_enabled:
@@ -252,6 +271,9 @@ def main():
         # env stepping
         obs, _, _, _ = env.step(actions)
         attention_step += 1
+        if gap_gas_visualizer is not None:
+            sensor = env.unwrapped.scene.sensors["height_scanner"]
+            gap_gas_visualizer.visualize(ray_gap_gas_boxes(sensor.data.ray_hits_w, gap_gas_cell_size))
 
         # Compute the next action. On update frames this same inference also
         # supplies attention for the current height-scan marker positions.

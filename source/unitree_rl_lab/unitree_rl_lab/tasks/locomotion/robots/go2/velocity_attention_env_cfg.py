@@ -274,19 +274,17 @@ class RewardsCfg:
     # air_time_variance_penalty = RewTerm(func=mdp.air_time_variance_penalty, weight=-1.0, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts, weight=-1.0, params={"threshold": 1, "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["Head_.*", ".*_hip", ".*_thigh", ".*_calf"]),},)
     feet_stumble = RewTerm(func=mdp.feet_stumble,weight=-1.0,params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),},) 
-    # foot_gap_stuck = RewTerm(func=mdp.FootGapStuckPenalty, weight=-2.0,
-    #     params={
-    #         "sensor_cfg": SceneEntityCfg("height_scanner"),
-    #         "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
-    #         "command_name": "base_velocity",
-    #         "support_radius": 0.30,
-    #         "foot_drop_threshold": 0.1,
-    #         "foot_drop_scale": 0.20,
-    #         "min_command_speed": 0.25,
-    #         "max_body_speed": 0.08,
-    #         "trigger_time": 2.0,
-    #     },
-    # )
+    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-5.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("height_scanner"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_(foot|calf|thigh|hip)|base"),
+            "support_radius": 0.35,
+            "min_depth": 0.05,
+            "depth_scale": 0.40,
+            "duration_scale": 0.50,
+            "max_depth": 2.0,
+        },
+    )
 
 
     # feet_contact_forces = RewTerm(

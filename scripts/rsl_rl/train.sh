@@ -7,11 +7,12 @@ python "${SCRIPT_DIR}/py/train.py" \
     --task go2_att \
     --logger tensorboard \
     --num_envs 2048 \
-    --run_name "16dim_4head" \
+    --run_name "add_gas_box-add_depth_curriculum-resume" \
     --max_iterations 99999999 \
     --headless \
-    # --resume \
-    # --load_run 2026-09-26_04-58-25_no_resume-add_stuck_penalty-std-terrain_easy \
+    --resume \
+    --load_run 2026-09-27_18-14-32_add_gas_box-add_depth_curriculum \
+
 
 
 
