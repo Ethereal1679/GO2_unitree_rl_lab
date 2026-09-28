@@ -20,11 +20,33 @@ inherit from ``isaaclab.terrains.terrains_cfg.TerrainConfig`` and define the fol
 """
 
 import isaaclab.terrains as terrain_gen
-from isaaclab.terrains.terrain_generator_cfg import TerrainGeneratorCfg
+from isaaclab.terrains import FlatPatchSamplingCfg
 from unitree_rl_lab.tasks.locomotion.terrains.terrains import (
     HfConcentricGapTerrainCfg,
     HfSteppingStonesTerrainCfg
 )
+
+
+def _cardinal_target_patches() -> dict[str, FlatPatchSamplingCfg]:
+    """Sample targets on the flat midpoint of each terrain border."""
+    ranges = {
+        "target_pos_x": ((3.2, 3.7), (-0.35, 0.35)),
+        "target_neg_x": ((-3.7, -3.2), (-0.35, 0.35)),
+        "target_pos_y": ((-0.35, 0.35), (3.2, 3.7)),
+        "target_neg_y": ((-0.35, 0.35), (-3.7, -3.2)),
+    }
+    return {
+        name: FlatPatchSamplingCfg(
+            num_patches=32,
+            patch_radius=0.1,
+            x_range=x_range,
+            y_range=y_range,
+            z_range=(-0.1, 0.1),
+            max_height_diff=0.02,
+        )
+        for name, (x_range, y_range) in ranges.items()
+    }
+
 
 # ======= terrain config =======
 COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
@@ -70,13 +92,15 @@ COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
         #     holes=False,
         # ),
         "hf_gaps": HfConcentricGapTerrainCfg(
-            proportion=0.2, gap_width_range=(0.1, 0.3), platform_width=2.0, border_width=0.5,
-            gap_depth=(-0.1, -2.0),
-            ground_width_range=(0.5, 0.5), ground_height_max=0.025
+            proportion=0.2, gap_width_range=(0.1, 0.3), platform_width=2.0,
+            gap_depth=(-1.1, -2.0), border_width=1.0,
+            ground_width_range=(0.5, 0.5), ground_height_max=0.025,
+            flat_patch_sampling=_cardinal_target_patches(),
         ),
         "hf_steppingstones": HfSteppingStonesTerrainCfg(
             proportion=0.2, stone_height_max=0.05, stone_width_range=(0.25, 0.5), stone_distance_range=(0.1, 0.2), platform_width=2.0,
-            holes_depth=(-0.1, -2.0), border_width=0.5
+            holes_depth=(-1.1, -2.0), border_width=1.0,
+            flat_patch_sampling=_cardinal_target_patches(),
         ),
     },
 )

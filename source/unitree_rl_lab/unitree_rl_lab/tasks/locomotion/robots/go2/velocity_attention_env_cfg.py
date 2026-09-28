@@ -14,13 +14,14 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
+
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from unitree_rl_lab.assets.robots.unitree import UNITREE_GO2_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
 from unitree_rl_lab.tasks.locomotion.terrains.terrains_generator_cfg import COMPLEX_RANDOM_CFG
 from unitree_rl_lab.tasks.locomotion.terrains.height_scan_visualization import HEIGHT_SCAN_MARKER_CFG
-
+from unitree_rl_lab.tasks.locomotion.mdp.commands.velocity_command import PoseVelocityCommandCfg
 
 @configclass
 class RobotSceneCfg(InteractiveSceneCfg):
@@ -152,26 +153,36 @@ class EventCfg:
 class CommandsCfg:
     """Command specifications for the MDP."""
 
-    base_velocity = mdp.UniformLevelVelocityCommandCfg(
+    base_velocity = PoseVelocityCommandCfg(
         asset_name="robot",
-        resampling_time_range=(10.0, 10.0),
-        rel_standing_envs = 0.0,
-        rel_heading_envs = 0.1,
-        heading_command = True,
-        heading_control_stiffness=0.5,
-        debug_vis=True,
-        ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.2, 1.0),
-            lin_vel_y=(-0.2, 0.2),
+        resampling_time_range=(8.0, 12.0),
+        debug_vis=False,
+        velocity_control_stiffness=2.0,
+        heading_control_stiffness=2.0,
+        rel_standing_envs=0.05,
+        ranges=PoseVelocityCommandCfg.Ranges(
+            lin_vel_x=(0.0, 0.0),
+            lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-1.0, 1.0),
-            heading=(-math.pi, math.pi)
         ),
-        limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-            lin_vel_x=(-1.0, 1.0), 
-            lin_vel_y=(-0.5, 0.5),
-            ang_vel_z=(-1.0, 1.0),
-            heading=(-math.pi, math.pi),
-        ),
+        random_velocity_terrain=[],
+        target_patch_names=("target_pos_x", "target_neg_x", "target_pos_y", "target_neg_y"),
+        velocity_ranges={
+            "hf_gaps": {
+                "lin_vel_x": (0.45, 0.8),
+                "lin_vel_y": (0.0, 0.0),
+                "ang_vel_z": (-1.0, 1.0),
+            },
+            "hf_steppingstones": {
+                "lin_vel_x": (0.45, 0.8),
+                "lin_vel_y": (0.0, 0.0),
+                "ang_vel_z": (-1.0, 1.0),
+            },
+        },
+        only_positive_lin_vel_x=True,
+        lin_vel_threshold=0.0,
+        ang_vel_threshold=0.0,
+        target_dis_threshold=0.4,
     )
 
 
@@ -265,6 +276,7 @@ class RewardsCfg:
     joint_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-10.0)
     energy = RewTerm(func=mdp.energy, weight=-2e-5)
     termination_penalty = RewTerm(func=mdp.is_terminated, weight=-200.0)
+    dont_wait = RewTerm(func=mdp.dont_wait, weight=-0.5, params={"command_name": "base_velocity"}) # TODO
 
     # -- robot
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
@@ -274,7 +286,7 @@ class RewardsCfg:
     # air_time_variance_penalty = RewTerm(func=mdp.air_time_variance_penalty, weight=-1.0, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts, weight=-1.0, params={"threshold": 1, "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["Head_.*", ".*_hip", ".*_thigh", ".*_calf"]),},)
     feet_stumble = RewTerm(func=mdp.feet_stumble,weight=-1.0,params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),},) 
-    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-5.0,
+    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-3.0,
         params={
             "sensor_cfg": SceneEntityCfg("height_scanner"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_(foot|calf|thigh|hip)|base"),
@@ -374,5 +386,3 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.scene.terrain.terrain_generator.num_cols = max(5, len(self.scene.terrain.terrain_generator.sub_terrains))
         self.scene.height_scanner.debug_vis = True # 开启调试可视化
         self.commands.base_velocity.debug_vis = True # 开启调试可视化
-        self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
-        self.commands.base_velocity.ranges.lin_vel_x = (-0.0, 1.0)
