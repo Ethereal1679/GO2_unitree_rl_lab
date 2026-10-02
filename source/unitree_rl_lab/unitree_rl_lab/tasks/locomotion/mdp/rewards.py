@@ -10,6 +10,7 @@ except ImportError:
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.sensors import ContactSensor
+from unitree_rl_lab.tasks.locomotion.mdp.commands.velocity_command import PoseVelocityCommand
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -325,3 +326,34 @@ def dont_wait(
     lin_vel_cmd_x = env.command_manager.get_command(command_name)[:, 0]
     lin_vel_x = asset.data.root_lin_vel_b[:, 0]
     return (lin_vel_cmd_x > 0.3) * ((lin_vel_x < 0.15).float() + (lin_vel_x < 0).float() + (lin_vel_x < -0.15).float())
+
+
+def stand_still(
+    env: ManagerBasedRLEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    asset = env.scene[asset_cfg.name]
+    dof_error = torch.sum(torch.abs(asset.data.joint_pos - asset.data.default_joint_pos), dim=1)
+
+    return (
+        dof_error
+        * (torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) < 0.1)
+        * (torch.abs(env.command_manager.get_command(command_name)[:, 2]) < 0.1)
+    )
+
+
+# 当heading command很大的时候，角速度误差不应该很小。惩罚机器人不跟
+def heading_error(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize heading error when there is a yaw velocity command."""
+    command_term = env.command_manager.get_term("base_velocity")
+    if not isinstance(command_term, PoseVelocityCommand):
+        return torch.zeros(env.num_envs, device=env.device)
+    command = command_term.command
+    asset: Articulation = env.scene[asset_cfg.name]
+    # 方向rad 和角速度误差rad/s
+    heading_cmd = torch.abs(command_term.heading_command_w)
+    ang_vel_error = torch.square(command[:, 2] - asset.data.root_ang_vel_w[:, 2])
+    # 位置掩码
+    target_dist = torch.norm(command_term.pos_command_w[:, :2] - asset.data.root_pos_w[:, :2], dim=1,)
+    active = target_dist > command_term.cfg.target_dis_threshold
+    # print(f"heading_cmd: {heading_cmd.mean().item():.3f}, ang_vel_error: {ang_vel_error.mean().item():.3f}") # DEBUG
+    return heading_cmd * (1.0 - torch.exp(-ang_vel_error / 0.7**2)) * active

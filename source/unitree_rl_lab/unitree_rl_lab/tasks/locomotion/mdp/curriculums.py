@@ -98,3 +98,55 @@ def terrain_levels_vel(
     terrain.update_env_origins(env_ids, move_up, move_down)
     # return the mean terrain level
     return torch.mean(terrain.terrain_levels.float())
+
+
+# --from zhuangziwen
+def terrain_levels_tracking_exp_vel(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    lin_vel_threshold: tuple = (0.3, 0.6),
+    ang_vel_threshold: tuple = (0.3, 0.5),
+) -> torch.Tensor:
+    """Curriculum based on the velocity tracking performance (exponential score) of the robot.
+
+    This term is used to increase the difficulty of the terrain when the robot tracks its commanded velocity well
+    (high score). It decreases the difficulty when the robot tracks its commanded velocity poorly (low score).
+
+    Args:
+        env: The learning environment.
+        env_ids: The environment ids for which the curriculum should be computed.
+        asset_cfg: The configuration of the robot articulation in the scene.
+        lin_vel_threshold: A tuple specifying the lower and upper threshold for the linear velocity tracking
+            score (exponential kernel).
+            If the score is below the lower threshold (poor tracking), the terrain difficulty is decreased.
+            If the score is above the upper threshold (good tracking), the terrain difficulty is increased.
+        ang_vel_threshold: A tuple specifying the lower and upper threshold for the angular velocity tracking
+            score (exponential kernel).
+            Similar logic applies as lin_vel_threshold.
+    Returns:
+        The mean terrain level for the given environment ids.
+    """
+    # extract the used quantities (to enable type-hinting)
+    asset: Articulation = env.scene[asset_cfg.name]
+    terrain: TerrainImporter = env.scene.terrain
+    command = env.command_manager.get_term("base_velocity")
+    cmd_vel = env.command_manager.get_command("base_velocity")
+
+    # compute the distance the robot walked
+    robot_distance = torch.norm(asset.data.root_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1)
+    beyond_half_distance = robot_distance > terrain.cfg.terrain_generator.size[0] / 2
+    expected_distance = torch.norm(cmd_vel[env_ids, :2], dim=1) * env.max_episode_length_s * 0.5
+    not_beyond_half_distance = robot_distance < expected_distance
+
+    tracking_exp_vel_xy = command.metrics["tracking_exp_vel_xy"][env_ids]
+    tracking_exp_vel_yaw = command.metrics["tracking_exp_vel_yaw"][env_ids]
+    # --线速度和角速度跟踪超过最大阈值的机器人会进入更难的地形
+    # 加入距离限制，只有当机器人走过的距离超过地形一半时，才会进入更难的地形
+    move_up = (tracking_exp_vel_xy > lin_vel_threshold[1]) * (tracking_exp_vel_yaw > ang_vel_threshold[1]) #* beyond_half_distance
+    move_down = (tracking_exp_vel_xy < lin_vel_threshold[0]) #* not_beyond_half_distance
+    move_down *= ~move_up
+    # update terrain levels
+    terrain.update_env_origins(env_ids, move_up, move_down)
+    # return the mean terrain level
+    return torch.mean(terrain.terrain_levels.float())

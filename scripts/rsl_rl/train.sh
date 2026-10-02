@@ -7,11 +7,12 @@ python "${SCRIPT_DIR}/py/train.py" \
     --task go2_att \
     --logger tensorboard \
     --num_envs 2048 \
-    --run_name "add_cmd_patch-resume" \
+    --run_name "no_resume-ABLATION-rm_gap_penetration_penalty" \
     --max_iterations 99999999 \
     --headless \
-    --resume \
-    --load_run 2026-09-28_04-05-56_add_gas_box-add_depth_curriculum-resume \
+    # --resume \
+    # --load_run 2026-09-30_23-42-13_resume-heading_error_std \
+
 
 
 

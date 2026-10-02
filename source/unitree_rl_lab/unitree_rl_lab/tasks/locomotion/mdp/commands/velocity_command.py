@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import MISSING
 
 import isaaclab.sim as sim_utils
@@ -62,6 +63,18 @@ class PoseVelocityCommandCfg(CommandTermCfg):
 
     target_patch_names: tuple[str, ...] = ("target",)
     """Names of terrain flat-patch groups used as position targets."""
+
+    prefer_forward_targets: bool = False
+    """Whether to bias target selection toward the robot's current heading."""
+
+    target_front_cone_half_angle: float = math.pi / 3.0
+    """Half-angle of the preferred forward target cone (in radians)."""
+
+    target_min_distance: float = 0.0
+    """Minimum preferred target distance. Closer patches are ignored when farther patches exist."""
+
+    target_heading_bias: float = 4.0
+    """Strength of the heading-alignment bias used when sampling target patches."""
 
     lin_vel_threshold: float = 0.15
     """Minimal threshold for the linear velocity command (in m/s)."""

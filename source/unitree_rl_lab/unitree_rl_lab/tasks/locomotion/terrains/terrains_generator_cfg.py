@@ -30,6 +30,8 @@ from unitree_rl_lab.tasks.locomotion.terrains.terrains import (
 def _cardinal_target_patches() -> dict[str, FlatPatchSamplingCfg]:
     """Sample targets on the flat midpoint of each terrain border."""
     ranges = {
+        # The center platform is 2 m wide; keep a 0.2 m margin for patch radius.
+        "target_center": ((-0.8, 0.8), (-0.8, 0.8)),
         "target_pos_x": ((3.2, 3.7), (-0.35, 0.35)),
         "target_neg_x": ((-3.7, -3.2), (-0.35, 0.35)),
         "target_pos_y": ((-0.35, 0.35), (3.2, 3.7)),
@@ -67,7 +69,7 @@ COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
         #     proportion=0.1, noise_range=(0.01, 0.06), noise_step=0.01, border_width=0.5
         # ),
         # "boxes": terrain_gen.MeshRandomGridTerrainCfg(
-        #     proportion=0.2, grid_width=0.45, grid_height_range=(0.05, 0.2), platform_width=2.0
+        #     proportion=0.1, grid_width=0.45, grid_height_range=(0.05, 0.2), platform_width=2.0
         # ),
         # "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
         #     proportion=0.1, slope_range=(0.0, 0.4), platform_width=2.0, border_width=0.5
@@ -93,13 +95,13 @@ COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
         # ),
         "hf_gaps": HfConcentricGapTerrainCfg(
             proportion=0.2, gap_width_range=(0.1, 0.3), platform_width=2.0,
-            gap_depth=(-1.1, -2.0), border_width=1.0,
+            gap_depth=(-0.1, -2.0), border_width=1.0,
             ground_width_range=(0.5, 0.5), ground_height_max=0.025,
             flat_patch_sampling=_cardinal_target_patches(),
         ),
         "hf_steppingstones": HfSteppingStonesTerrainCfg(
-            proportion=0.2, stone_height_max=0.05, stone_width_range=(0.25, 0.5), stone_distance_range=(0.1, 0.2), platform_width=2.0,
-            holes_depth=(-1.1, -2.0), border_width=1.0,
+            proportion=0.2, stone_height_max=0.05, stone_width_range=(0.25, 0.5), stone_distance_range=(0.1, 0.15), platform_width=2.0,
+            holes_depth=(-0.1, -2.0), border_width=1.0,
             flat_patch_sampling=_cardinal_target_patches(),
         ),
     },

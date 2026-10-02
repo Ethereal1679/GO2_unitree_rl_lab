@@ -159,26 +159,41 @@ class CommandsCfg:
         debug_vis=False,
         velocity_control_stiffness=2.0,
         heading_control_stiffness=2.0,
-        rel_standing_envs=0.05,
+        rel_standing_envs=0.05, # 5%的环境站立
         ranges=PoseVelocityCommandCfg.Ranges(
             lin_vel_x=(0.0, 0.0),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-1.0, 1.0),
         ),
         random_velocity_terrain=[],
-        target_patch_names=("target_pos_x", "target_neg_x", "target_pos_y", "target_neg_y"),
+        # Sample from the four cardinal border groups, biased toward the current heading.
+        target_patch_names=(
+            "target_center",
+            "target_pos_x",
+            "target_neg_x",
+            "target_pos_y",
+            "target_neg_y",
+        ),
+        # 按照锥形扫描选择前方的patch，尽量减少选择后方的patch
+        prefer_forward_targets=False,
+        target_front_cone_half_angle=math.radians(60.0),
+        target_min_distance=1.0,
+        target_heading_bias=4.0,
+        # 随机clamp速度上限，不代表真实速度
+        # NOTE 这里都是速度上限随机化，不存在负数
         velocity_ranges={
             "hf_gaps": {
-                "lin_vel_x": (0.45, 0.8),
+                "lin_vel_x": (0.45, 1.0),
                 "lin_vel_y": (0.0, 0.0),
                 "ang_vel_z": (-1.0, 1.0),
             },
             "hf_steppingstones": {
-                "lin_vel_x": (0.45, 0.8),
+                "lin_vel_x": (0.45, 1.0),
                 "lin_vel_y": (0.0, 0.0),
                 "ang_vel_z": (-1.0, 1.0),
             },
         },
+        # 最好是正向速度，避免负向速度导致的机器人后退
         only_positive_lin_vel_x=True,
         lin_vel_threshold=0.0,
         ang_vel_threshold=0.0,
@@ -264,39 +279,43 @@ class RewardsCfg:
     """Reward terms for the MDP."""
 
     # -- task
-    track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.2)})
+    track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
     track_ang_vel_z = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=1.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
+    heading_error = RewTerm(func=mdp.heading_error, weight=-1.0,) # 如果target生成在后方，机器人会学会原地转弯利用vel的正向clamp来始终追踪小速度奖励
+    # is_alive = RewTerm(func=mdp.is_alive, weight=1.0)
+
     # -- base
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
     joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-2e-5) # TODO
+    joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-2e-5)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     joint_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-10.0)
     energy = RewTerm(func=mdp.energy, weight=-2e-5)
-    termination_penalty = RewTerm(func=mdp.is_terminated, weight=-200.0)
-    dont_wait = RewTerm(func=mdp.dont_wait, weight=-0.5, params={"command_name": "base_velocity"}) # TODO
+    termination_penalty = RewTerm(func=mdp.is_terminated, weight=-200.0) # protect from committing suicide
+
+    # -- push
+    dont_wait = RewTerm(func=mdp.dont_wait, weight=-0.5, params={"command_name": "base_velocity"})
+    stand_still = RewTerm(func=mdp.stand_still, weight=-0.5, params={"command_name": "base_velocity"})
 
     # -- robot
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
     joint_position_penalty = RewTerm(func=mdp.joint_position_penalty, weight=-0.5, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*"),"stand_still_scale": 5.0,"velocity_threshold": 0.3,},)
     feet_slide = RewTerm(func=mdp.feet_slide,weight=-0.1, params={"asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),},)
     feet_air_time = RewTerm(func=mdp.feet_air_time,weight=0.1, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),"command_name": "base_velocity","threshold": 0.5,},)
-    # air_time_variance_penalty = RewTerm(func=mdp.air_time_variance_penalty, weight=-1.0, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},)
+    air_time_variance_penalty = RewTerm(func=mdp.air_time_variance_penalty, weight=-1.0, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts, weight=-1.0, params={"threshold": 1, "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["Head_.*", ".*_hip", ".*_thigh", ".*_calf"]),},)
     feet_stumble = RewTerm(func=mdp.feet_stumble,weight=-1.0,params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),},) 
-    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-3.0,
-        params={
-            "sensor_cfg": SceneEntityCfg("height_scanner"),
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*_(foot|calf|thigh|hip)|base"),
-            "support_radius": 0.35,
-            "min_depth": 0.05,
-            "depth_scale": 0.40,
-            "duration_scale": 0.50,
-            "max_depth": 2.0,
-        },
-    )
+    # gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-3.0,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("height_scanner"),
+    #         "asset_cfg": SceneEntityCfg("robot", body_names=".*_(foot|calf|thigh|hip)|base"),
+    #         "support_radius": 0.35, # 有效半径，单位 m，表示在这个半径范围内的地面点会被认为是支撑点
+    #         "min_depth": 0.05, "max_depth": 2.0,
+    #         "depth_scale": 0.40, "duration_scale": 0.50,
+    #     },
+    # )
 
 
     # feet_contact_forces = RewTerm(
@@ -309,22 +328,22 @@ class RewardsCfg:
     # )
 
 
-
 @configclass
 class TerminationsCfg:
     """Termination terms for the MDP."""
-
+    # NOTE Termination terms don't need too many
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_contact = DoneTerm(func=mdp.illegal_contact, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"), "threshold": 1.0},)
     # bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.707}) # 45 degrees
     # base_height = DoneTerm(func=mdp.root_height_below_minimum,params={"minimum_height": 0.16,"asset_cfg": SceneEntityCfg("robot"),},)
 
+
 @configclass
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
+    # terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
+    terrain_levels = CurrTerm(func=mdp.terrain_levels_tracking_exp_vel, params={"lin_vel_threshold": (0.3, 0.6), "ang_vel_threshold": (0.1, 0.3)})
 
-    terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
-    # lin_vel_cmd_levels = CurrTerm(mdp.lin_vel_cmd_levels)
 
 
 @configclass
@@ -384,5 +403,6 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.scene.terrain.terrain_generator.num_rows = 15
         # Keep at least one curriculum column for every configured terrain type.
         self.scene.terrain.terrain_generator.num_cols = max(5, len(self.scene.terrain.terrain_generator.sub_terrains))
+        self.scene.terrain.max_init_terrain_level = self.scene.terrain.terrain_generator.num_rows // 2 # 地形一半
         self.scene.height_scanner.debug_vis = True # 开启调试可视化
         self.commands.base_velocity.debug_vis = True # 开启调试可视化

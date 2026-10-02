@@ -176,11 +176,55 @@ class PoseVelocityCommand(CommandTerm):
         )
 
     def _resample_command(self, env_ids: Sequence[int]):
-        # sample new position targets from the terrain
-        ids = torch.randint(0, self.valid_targets.shape[2], size=(len(env_ids),), device=self.device)
-        self.pos_command_w[env_ids] = self.valid_targets[
-            self.terrain.terrain_levels[env_ids], self.terrain.terrain_types[env_ids], ids
+        env_ids = torch.as_tensor(env_ids, dtype=torch.long, device=self.device)
+        if env_ids.numel() == 0:
+            return
+
+        # Obtain every valid target for the terrain occupied by each environment.
+        candidate_targets = self.valid_targets[
+            self.terrain.terrain_levels[env_ids], self.terrain.terrain_types[env_ids]
         ]
+
+        if self.cfg.prefer_forward_targets:
+            # Prefer sufficiently distant targets inside a cone centered on the
+            # robot's current forward direction. If the robot is already at the
+            # forward border and no distant patch lies in that cone, sample from
+            # the remaining patches with a strong bias toward the smallest turn.
+            target_vec_xy = candidate_targets[:, :, :2] - self.robot.data.root_pos_w[env_ids, None, :2]
+            target_dist = torch.linalg.vector_norm(target_vec_xy, dim=-1)
+
+            heading = self.robot.data.heading_w[env_ids]
+            forward_w = torch.stack((torch.cos(heading), torch.sin(heading)), dim=-1)
+            heading_alignment = torch.sum(target_vec_xy * forward_w[:, None, :], dim=-1) / target_dist.clamp_min(
+                1.0e-6
+            )
+
+            min_target_distance = max(self.cfg.target_min_distance, self.cfg.target_dis_threshold)
+            distant_mask = target_dist > min_target_distance
+            has_distant_target = distant_mask.any(dim=1, keepdim=True)
+            eligible_mask = torch.where(has_distant_target, distant_mask, torch.ones_like(distant_mask))
+
+            front_cone_cos = torch.cos(
+                torch.tensor(self.cfg.target_front_cone_half_angle, dtype=heading_alignment.dtype, device=self.device)
+            )
+            front_mask = eligible_mask & (heading_alignment >= front_cone_cos)
+            has_front_target = front_mask.any(dim=1, keepdim=True)
+
+            # Subtract the row maximum before exponentiation for numerical stability.
+            masked_alignment = heading_alignment.masked_fill(~eligible_mask, -torch.inf)
+            best_alignment = masked_alignment.max(dim=1, keepdim=True).values
+            heading_weights = torch.exp(self.cfg.target_heading_bias * (heading_alignment - best_alignment))
+            heading_weights *= eligible_mask
+
+            # Do not select a rear/side target when a valid forward target exists.
+            front_weights = heading_weights * front_mask
+            target_weights = torch.where(has_front_target, front_weights, heading_weights)
+            ids = torch.multinomial(target_weights, num_samples=1).squeeze(1)
+        else:
+            ids = torch.randint(0, candidate_targets.shape[1], size=(len(env_ids),), device=self.device)
+
+        batch_ids = torch.arange(len(env_ids), device=self.device)
+        self.pos_command_w[env_ids] = candidate_targets[batch_ids, ids]
 
         # sample velocity commands
         r = torch.empty(len(env_ids), device=self.device)
@@ -287,9 +331,7 @@ class PoseVelocityCommand(CommandTerm):
             self.cfg.ranges.ang_vel_z[1],
         )
         self.vel_command_b[:] *= (target_dist > self.cfg.target_dis_threshold).unsqueeze(-1)
-        self.vel_command_b[:, :2] *= (
-            (torch.norm(self.vel_command_b[:, :2], dim=1) > self.cfg.lin_vel_threshold).float().unsqueeze(-1)
-        )
+        self.vel_command_b[:, :2] *= ((torch.norm(self.vel_command_b[:, :2], dim=1) > self.cfg.lin_vel_threshold).float().unsqueeze(-1))
         self.vel_command_b[:, 2] *= (torch.abs(self.vel_command_b[:, 2]) > self.cfg.ang_vel_threshold).float()
         standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
         self.vel_command_b[standing_env_ids, :] = 0.0
@@ -298,6 +340,23 @@ class PoseVelocityCommand(CommandTerm):
         self.vel_command_b[random_velocity_env_ids, 0] = self.random_lin_vel_x[random_velocity_env_ids]
         self.vel_command_b[random_velocity_env_ids, 1] = self.random_lin_vel_y[random_velocity_env_ids]
         self.vel_command_b[random_velocity_env_ids, 2] = self.random_ang_vel_z[random_velocity_env_ids]
+
+        # debug
+        DEBUG = False
+        if DEBUG:
+            lin_speed = torch.linalg.vector_norm(self.vel_command_b[:, :2], dim=1)
+            # print(f"vx={self.vel_command_b[:, 0].max().item():.3f}, vy={self.vel_command_b[:, 1].max().item():.3f}")
+            print(
+                f"cmd mean: "
+                f"vx={self.vel_command_b[:, 0].mean().item():.3f}, "
+                f"|vx|={self.vel_command_b[:, 0].abs().mean().item():.3f}, "
+                f"|vy|={self.vel_command_b[:, 1].abs().mean().item():.3f}, "
+                f"speed={lin_speed.mean().item():.3f}; "
+                f"speed<0.3={(lin_speed < 0.2).sum().item()}, "
+                f"zero={(lin_speed < 1e-4).sum().item()}; "
+                f"cap_x={self.max_command_b[:, 0].mean().item():.3f}, "
+                f"target_dist={target_dist.mean().item():.3f}"
+            )
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first tome

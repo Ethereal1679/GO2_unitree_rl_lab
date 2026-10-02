@@ -370,13 +370,13 @@ class GapPenetrationPenalty(ManagerTermBase):
         # This is still a point approximation, not the full collision shape.
         body = asset.data.body_com_pos_w[:, asset_cfg.body_ids]
         valid = torch.isfinite(hits).all(dim=-1)
+        # -- scan for the nearest support surface below each body point, ignoring gaps
         distance_sq = torch.sum((body[:, :, None, :2] - hits[:, None, :, :2]) ** 2, dim=-1)
         nearby = valid[:, None, :] & (distance_sq <= support_radius**2)
         support = torch.where(nearby, hits[:, None, :, 2], torch.full_like(hits[:, None, :, 2], -torch.inf)).amax(-1)
         support = torch.where(nearby.any(-1), support, body[..., 2])
         depth = (support - body[..., 2] - min_depth).clamp(0.0, max_depth).amax(1)
         inside = depth > 0.0
+        # -- accumulate time spent inside the gap volume, reset when outside
         self.inside_time = torch.where(inside, self.inside_time + env.step_dt, torch.zeros_like(self.inside_time))
-        return (depth / max(depth_scale, 1.0e-6)).clamp(0.0, 1.0) * (
-            self.inside_time / max(duration_scale, 1.0e-6)
-        ).clamp(0.0, 1.0)
+        return (depth / max(depth_scale, 1.0e-6)).clamp(0.0, 1.0) * (self.inside_time / max(duration_scale, 1.0e-6)).clamp(0.0, 1.0)
