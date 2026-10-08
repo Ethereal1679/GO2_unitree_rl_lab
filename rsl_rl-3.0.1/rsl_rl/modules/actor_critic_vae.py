@@ -114,6 +114,7 @@ class HeightMapActor(nn.Module):
             raise ValueError(f"Expected {expected_dim} actor inputs, got {actor_input.shape[-1]}.")
         policy_obs = actor_input[..., : self.policy_obs_dim]
         height_map = actor_input[..., self.policy_obs_dim :]
+        # import ipdb; ipdb.set_trace()
         return policy_obs, height_map
 
     def get_latent(self, height_map: torch.Tensor, sample: bool = False) -> torch.Tensor:

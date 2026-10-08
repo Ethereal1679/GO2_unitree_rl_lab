@@ -32,7 +32,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         prim_path="/World/ground",
         terrain_type="generator",  # "plane", "generator"
         terrain_generator=COMPLEX_RANDOM_CFG,
-        max_init_terrain_level=3,
+        max_init_terrain_level=1,
         collision_group=-1,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
@@ -390,9 +390,9 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
             if self.scene.terrain.terrain_generator is not None:
                 self.scene.terrain.terrain_generator.curriculum = False
 
-        # self.events.push_robot = None
-        # self.events.add_base_mass = None
-        # self.events.base_com = None
+        self.events.push_robot = None
+        self.events.add_base_mass = None
+        self.events.base_com = None
 
 
 @configclass

@@ -715,3 +715,4 @@ for a in UNITREE_G1_29DOF_MIMIC_CFG.actuators.values():
     for n in names:
         if n in e and n in s and s[n]:
             UNITREE_G1_29DOF_MIMIC_ACTION_SCALE[n] = 0.25 * e[n] / s[n]
+            

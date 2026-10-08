@@ -21,8 +21,18 @@ def format_value(x):
 
 def export_deploy_cfg(env: ManagerBasedRLEnv, log_dir):
     asset: Articulation = env.scene["robot"]
-    joint_sdk_names = env.cfg.scene.robot.joint_sdk_names
-    joint_ids_map, _ = resolve_matching_names(asset.data.joint_names, joint_sdk_names, preserve_order=True)
+    # ``joint_sdk_names`` is specific to Unitree deployment configurations and
+    # is not part of Isaac Lab's generic ``ArticulationCfg``.  Custom robots
+    # (for example ``G1_CYLINDER_CFG``) should be exportable without adding
+    # this deployment-only field to their articulation config.
+    joint_sdk_names = getattr(env.cfg.scene.robot, "joint_sdk_names", None)
+    if joint_sdk_names:
+        joint_ids_map, _ = resolve_matching_names(
+            asset.data.joint_names, joint_sdk_names, preserve_order=True
+        )
+    else:
+        joint_sdk_names = list(asset.data.joint_names)
+        joint_ids_map = list(range(len(joint_sdk_names)))
 
     cfg = {}  # noqa: SIM904
     cfg["joint_ids_map"] = joint_ids_map
