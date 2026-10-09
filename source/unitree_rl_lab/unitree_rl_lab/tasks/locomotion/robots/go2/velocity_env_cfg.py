@@ -20,6 +20,7 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 from unitree_rl_lab.assets.robots.unitree import UNITREE_GO2_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
+from unitree_rl_lab.tasks.locomotion.height_scan.height_scan_visualization import HEIGHT_SCAN_MARKER_CFG
 
 COBBLESTONE_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
     size=(8.0, 8.0),
@@ -113,6 +114,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         ),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
+        visualizer_cfg=HEIGHT_SCAN_MARKER_CFG,
     )
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
     # lights

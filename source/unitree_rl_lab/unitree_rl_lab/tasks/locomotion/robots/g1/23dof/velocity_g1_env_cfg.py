@@ -21,8 +21,8 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 # from unitree_rl_lab.assets.robots.unitree import UNITREE_G1_23DOF_CFG as ROBOT_CFG
 from unitree_rl_lab.assets.robots.bm_g1_23dof import G1_CYLINDER_CFG as ROBOT_CFG
 from unitree_rl_lab.tasks.locomotion import mdp
-from unitree_rl_lab.tasks.locomotion.terrains.terrains_generator_cfg import COMPLEX_RANDOM_CFG
-from unitree_rl_lab.tasks.locomotion.terrains.height_scan_visualization import HEIGHT_SCAN_MARKER_CFG
+from unitree_rl_lab.tasks.locomotion.terrains.terrains_cfg import COMPLEX_RANDOM_CFG
+from unitree_rl_lab.tasks.locomotion.height_scan.height_scan_visualization import HEIGHT_SCAN_MARKER_CFG
 from unitree_rl_lab.tasks.locomotion.mdp.commands.velocity_command import PoseVelocityCommandCfg
 
 @configclass
@@ -65,7 +65,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         ),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
-        # visualizer_cfg=HEIGHT_SCAN_MARKER_CFG,
+        visualizer_cfg=HEIGHT_SCAN_MARKER_CFG,
     )
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
     # lights

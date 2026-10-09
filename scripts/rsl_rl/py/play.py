@@ -48,6 +48,12 @@ parser.add_argument(
     help="Color the existing height-scan markers from policy attention weights.",
 )
 parser.add_argument(
+    "--height_scan_gradient_viz",
+    action="store_true",
+    default=False,
+    help="Color height-scan markers by the aligned temporal height-change rate.",
+)
+parser.add_argument(
     "--gap_gas_enable_viz",
     action="store_true",
     default=False,
@@ -58,6 +64,8 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+if args_cli.attention_enable_viz and args_cli.height_scan_gradient_viz:
+    parser.error("--attention_enable_viz and --height_scan_gradient_viz both write height-scan dot colors.")
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
@@ -168,6 +176,32 @@ def main():
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
+    height_gradient = None
+    height_gradient_visualizer = None
+    height_gradient_waiting_for_markers = False
+    if args_cli.height_scan_gradient_viz:
+        from unitree_rl_lab.tasks.locomotion.height_scan.height_scan_grad import HeightScanGradient
+        from unitree_rl_lab.tasks.locomotion.height_scan.height_scan_visualization import (
+            HeightScanGradientVisualizer,
+        )
+
+        try:
+            sensor = env.unwrapped.scene.sensors["height_scanner"]
+        except (KeyError, TypeError):
+            sensor = None
+        if sensor is None:
+            print("[WARNING] No height_scanner sensor found; gradient visualization disabled.")
+        else:
+            if getattr(sensor, "ray_visualizer", None) is None:
+                sensor.set_debug_vis(True)
+            height_gradient_visualizer = HeightScanGradientVisualizer(env)
+            if height_gradient_visualizer.marker_visualizer is None:
+                print("[WARNING] RayCaster marker visualization is unavailable; gradient visualization disabled.")
+                height_gradient_visualizer = None
+            else:
+                height_gradient = HeightScanGradient()
+                print("[INFO] Aligned temporal height-scan gradient visualization enabled.")
+
     gap_gas_visualizer = None
     if args_cli.gap_gas_enable_viz:
         from unitree_rl_lab.tasks.locomotion.terrains.penalty_gap_gas import (
@@ -263,6 +297,16 @@ def main():
     obs = env.get_observations()
     timestep = 0
     attention_step = 0
+    if height_gradient is not None:
+        reset_mask = getattr(env.unwrapped, "episode_length_buf", None)
+        if reset_mask is not None:
+            reset_mask = reset_mask == 0
+        height_rate, height_valid = height_gradient.update(
+            height_gradient_visualizer.sensor, dt=env.unwrapped.step_dt, reset_mask=reset_mask
+        )
+        height_gradient_waiting_for_markers = not height_gradient_visualizer.update(height_rate, height_valid)
+        if height_gradient_waiting_for_markers:
+            print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
     # simulate environment
     with torch.inference_mode():
         if attention_viz_enabled:
@@ -281,6 +325,17 @@ def main():
         # env stepping
         obs, _, _, _ = env.step(actions)
         attention_step += 1
+        if height_gradient is not None:
+            reset_mask = getattr(env.unwrapped, "episode_length_buf", None)
+            if reset_mask is not None:
+                reset_mask = reset_mask == 0
+            height_rate, height_valid = height_gradient.update(
+                height_gradient_visualizer.sensor, dt=env.unwrapped.step_dt, reset_mask=reset_mask
+            )
+            updated = height_gradient_visualizer.update(height_rate, height_valid)
+            if not updated and not height_gradient_waiting_for_markers:
+                print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
+            height_gradient_waiting_for_markers = not updated
 
         # Compute the next action. On update frames this same inference also
         # supplies attention for the current height-scan marker positions.

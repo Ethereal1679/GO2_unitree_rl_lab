@@ -76,3 +76,5 @@ datasets
 
 # elevation map
 # **/zelevation_mapping_cupy/*
+
+./IDEAS.md

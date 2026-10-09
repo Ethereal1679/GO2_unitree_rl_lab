@@ -11,4 +11,10 @@
   unitree_rl_lab/unitree_rl_lab/tasks/locomotion/terrains/penalty_gap_gas.py' 这个里面
 
 
-  ## 2.
+## 2.
+
+  › '/home/ab123456/文档/GO2_unitree_rl_lab/source/unitree_rl_lab/unitree_rl_lab/tasks/locomotion/height_scan/height_scan_grad.py' 在这里帮我实现将高程图
+  前后两帧作差,这两个高程图都应该转换到我当前的坐标系中,这主要是为了应对旋转. 详细来说就是上一帧的高程图转换到当前坐标系中,可能是yaw的转换,然后对应scan
+  dot的高度进行相减,或者再除以dt表示变化率梯度,来衡量地形变化的向量场. 同时在这里添加'/home/ab123456/文档/GO2_unitree_rl_lab/source/unitree_rl_lab/
+  unitree_rl_lab/tasks/locomotion/height_scan/height_scan_visualization.py'这个向量场的可视化,就是在原来的height scan dot的点的基础上,增加颜色的变化,也
+  就是从粉色到深红色的变化,颜色越浅,就代表当前的梯度越小,越深代表越大, 可以直接修改原来的height scna 颜色逻辑上面.
