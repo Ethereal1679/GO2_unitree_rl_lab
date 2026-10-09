@@ -97,12 +97,8 @@ class PoseVelocityCommandCfg(CommandTermCfg):
     flat_patch_visualizer_cfg: VisualizationMarkersCfg = VisualizationMarkersCfg(
         prim_path="/Visuals/TerrainFlatPatches",
         markers={
-            "Goal": sim_utils.CylinderCfg(
-                radius=0.15,
-                height=0.1,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
-            ),
-            "Patches": sim_utils.CylinderCfg(
+            # Keep one prototype so every instance uses a valid PointInstancer index.
+            "patch": sim_utils.CylinderCfg(
                 radius=0.15,
                 height=0.05,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),

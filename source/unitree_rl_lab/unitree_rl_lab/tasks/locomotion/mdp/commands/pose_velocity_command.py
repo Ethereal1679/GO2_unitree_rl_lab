@@ -363,8 +363,7 @@ class PoseVelocityCommand(CommandTerm):
         if debug_vis:
             if not hasattr(self, "flat_patch_visualizer"):
                 # -- pose
-                self.cfg.flat_patch_visualizer_cfg.markers["Goal"].radius = self.cfg.target_dis_threshold
-                self.cfg.flat_patch_visualizer_cfg.markers["Patches"].radius = self.cfg.target_dis_threshold
+                self.cfg.flat_patch_visualizer_cfg.markers["patch"].radius = self.cfg.target_dis_threshold
                 self.flat_patch_visualizer = VisualizationMarkers(self.cfg.flat_patch_visualizer_cfg)
                 # -- goal
                 self.goal_vel_visualizer = VisualizationMarkers(self.cfg.goal_vel_visualizer_cfg)
@@ -386,13 +385,8 @@ class PoseVelocityCommand(CommandTerm):
         if getattr(self.cfg, "patch_vis", True):
             flat_patches = self.valid_targets.reshape(-1, 3)
             poses = torch.cat([self.pos_command_w, flat_patches], dim=0)
-            marker_indices = torch.cat(
-                [
-                    torch.zeros(self.num_envs, dtype=torch.int, device=self.device),
-                    torch.ones(flat_patches.shape[0], dtype=torch.int, device=self.device),
-                ],
-                dim=0,
-            )
+            # A single configured prototype means every instance must use index 0.
+            marker_indices = torch.zeros(poses.shape[0], dtype=torch.int, device=self.device)
             self.flat_patch_visualizer.visualize(poses, marker_indices=marker_indices)
         else:
             marker_indices = torch.zeros(self.num_envs, dtype=torch.int, device=self.device)

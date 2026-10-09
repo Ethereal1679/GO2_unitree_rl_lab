@@ -55,7 +55,7 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     obs_groups = {"policy": ["policy"], "critic": ["critic"]}
     max_iterations = 999999999999
-    save_interval = 200
+    save_interval = 500
     experiment_name = ""  # same as task name
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
@@ -81,7 +81,7 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
 
-# ========= VAE ==========
+# ========= VAE GO2 ==========
 @configclass
 class Go2VAERunnerCfg(BasePPORunnerCfg):
     """Go2 PPO runner using the height-map VAE actor."""
@@ -114,4 +114,23 @@ class Go2AttentionRunnerCfg(BasePPORunnerCfg):
         num_heads=8,
         map_shape=(16, 11),
         noise_std_type="scalar", # TODO 找一下为什么会出现std为负数的情况(已解决，height scan出现NAN)
+    )
+
+
+
+
+
+# ========= VAE G1 ==========
+@configclass
+class G1VAERunnerCfg(BasePPORunnerCfg):
+    """G1 PPO runner using the height-map VAE actor."""
+
+    policy = RslRlPpoActorCriticVAECfg(
+        init_noise_std=1.0,
+        actor_obs_normalization=False,
+        critic_obs_normalization=False,
+        actor_hidden_dims=[512, 256, 128],
+        critic_hidden_dims=[512, 256, 128],
+        activation="elu",
+        latent_dim=16,
     )

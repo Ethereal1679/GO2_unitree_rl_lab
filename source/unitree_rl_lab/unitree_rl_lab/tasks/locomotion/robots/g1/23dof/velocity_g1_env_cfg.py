@@ -283,11 +283,11 @@ class RewardsCfg:
     # -- task
     track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
     track_ang_vel_z = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=1.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
-    heading_error = RewTerm(func=mdp.heading_error, weight=-1.0,) # 如果target生成在后方，机器人会学会原地转弯利用vel的正向clamp来始终追踪小速度奖励
+    heading_error = RewTerm(func=mdp.heading_error, weight=-2.0,) # 如果target生成在后方，机器人会学会原地转弯利用vel的正向clamp来始终追踪小速度奖励
 
 
     # -- basic
-    alive = RewTerm(func=mdp.is_alive, weight=0.1)
+    # alive = RewTerm(func=mdp.is_alive, weight=0.1)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
@@ -307,13 +307,15 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
     joint_position_penalty = RewTerm(func=mdp.joint_position_penalty, weight=-0.5, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*"),"stand_still_scale": 5.0,"velocity_threshold": 0.3,},)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts,weight=-1.0,params={"threshold": 1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["(?!.*ankle.*).*"]),},)
-    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-3.0,
+    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-5.0,
         params={
-            "sensor_cfg": SceneEntityCfg("height_scanner"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*"),
-            "support_radius": 0.35, # 有效半径，单位 m，表示在这个半径范围内的地面点会被认为是支撑点
             "min_depth": 0.05, "max_depth": 2.0,
-            "depth_scale": 0.40, "duration_scale": 0.50,},
+            "depth_scale": 0.40, "duration_scale": 0.50,
+            "sub_terrain_size": COMPLEX_RANDOM_CFG.size,
+            "plane_z": -0.07,
+            "plane_thickness": 0.02,
+        },
     )
 
     # -- feet

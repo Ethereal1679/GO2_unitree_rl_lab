@@ -1,8 +1,8 @@
-"""Visualization-only gap volumes and penetration helpers.
+"""Static terrain penalty planes and optional visualization helpers.
 
-The gas volumes in this module are intentionally represented by Isaac Lab
-visualization markers. They have no collision properties, so enabling them
-cannot change contacts, ray-casts, or the training dynamics.
+The gas geometry is intentionally represented by Isaac Lab visualization
+markers. It has no collision properties, so enabling visualization cannot
+change contacts, ray-casts, or the training dynamics.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from isaaclab.managers import ManagerTermBase
 
 @dataclass(frozen=True)
 class GapGasBoxes:
-    """Axis-aligned transparent volumes that occupy terrain gaps.
+    """Axis-aligned transparent volumes or planes in world coordinates.
 
     ``centers`` and ``sizes`` are expressed in world coordinates.  The arrays
     have shape ``(N, 3)`` and can be passed directly to
@@ -33,6 +33,99 @@ class GapGasBoxes:
             raise ValueError(f"centers must have shape (N, 3), got {self.centers.shape}")
         if self.sizes.shape != self.centers.shape:
             raise ValueError(f"sizes must match centers, got {self.sizes.shape} and {self.centers.shape}")
+
+
+def terrain_penalty_planes(
+    terrain_origins_w: Any,
+    terrain_size: tuple[float, float] | None = None,
+    plane_z: float = -0.02,
+    thickness: float = 0.02,
+    *,
+    sub_terrain_size: tuple[float, float] | None = None,
+) -> GapGasBoxes:
+    """Create one fixed plane covering each sub-terrain tile.
+
+    ``terrain_origins_w`` must contain the fixed world-space origin of each
+    sub-terrain tile, not the surrounding terrain border.  The returned
+    planes never depend on robot state. Their XY footprint is exactly one
+    ``sub_terrain_size`` tile and the top face is at ``plane_z`` relative to
+    each origin.
+
+    ``terrain_size`` is kept as a compatibility alias. New callers should
+    use ``sub_terrain_size`` to make it explicit that the global terrain
+    border is not covered.
+    """
+    if sub_terrain_size is not None:
+        if terrain_size is not None:
+            raise ValueError("pass only one of terrain_size and sub_terrain_size")
+        terrain_size = sub_terrain_size
+    if terrain_size is None:
+        raise ValueError("sub_terrain_size must be provided")
+    if torch.is_tensor(terrain_origins_w):
+        origins = terrain_origins_w.detach().cpu().numpy().astype(np.float32, copy=False)
+    else:
+        origins = np.asarray(terrain_origins_w, dtype=np.float32)
+    if origins.ndim < 2 or origins.shape[-1] != 3:
+        raise ValueError(f"terrain_origins_w must have shape (..., 3), got {origins.shape}")
+    origins = origins.reshape(-1, 3)
+    width, length = float(terrain_size[0]), float(terrain_size[1])
+    thickness = float(thickness)
+    if width <= 0.0 or length <= 0.0 or thickness <= 0.0:
+        raise ValueError("terrain_size and thickness must be positive")
+    centers = origins.copy()
+    centers[:, 2] += float(plane_z) - 0.5 * float(thickness)
+    sizes = np.empty_like(centers)
+    sizes[:, 0] = width
+    sizes[:, 1] = length
+    sizes[:, 2] = float(thickness)
+    return GapGasBoxes(centers, sizes)
+
+
+def terrain_penalty_plane_depth(
+    points_w: Any,
+    plane_centers_w: Any,
+    plane_sizes: Any,
+    min_depth: float = 0.05,
+    max_depth: float = 2.5,
+) -> Any:
+    """Return penetration below fixed terrain planes for every point."""
+    points = torch.as_tensor(points_w)
+    centers = torch.as_tensor(plane_centers_w, device=points.device, dtype=points.dtype)
+    sizes = torch.as_tensor(plane_sizes, device=points.device, dtype=points.dtype)
+    if points.ndim != 3 or points.shape[-1] != 3:
+        raise ValueError(f"points_w must have shape (N, P, 3), got {tuple(points.shape)}")
+    if centers.ndim != 2 or centers.shape[-1] != 3 or sizes.shape != centers.shape:
+        raise ValueError("plane_centers_w and plane_sizes must both have shape (G, 3)")
+    if centers.shape[0] == 0:
+        return torch.zeros(points.shape[:-1], device=points.device, dtype=points.dtype)
+    # The reward supplies one plane per environment.  Handle that common case
+    # without constructing an O(num_envs^2) pairwise tensor.  A single plane
+    # or a different number of planes retains the generic max-over-planes path.
+    if centers.shape[0] in (1, points.shape[0]):
+        if centers.shape[0] == 1:
+            centers = centers.expand(points.shape[0], -1)
+            sizes = sizes.expand(points.shape[0], -1)
+        lower = centers[:, None, :] - 0.5 * sizes[:, None, :]
+        upper = centers[:, None, :] + 0.5 * sizes[:, None, :]
+        inside_xy = (
+            (points[..., 0] >= lower[..., 0])
+            & (points[..., 0] <= upper[..., 0])
+            & (points[..., 1] >= lower[..., 1])
+            & (points[..., 1] <= upper[..., 1])
+        )
+        depth = (upper[..., 2] - points[..., 2] - float(min_depth)).clamp(0.0, max_depth)
+        return torch.where(inside_xy, depth, torch.zeros_like(depth))
+
+    lower = centers - 0.5 * sizes
+    upper = centers + 0.5 * sizes
+    inside_xy = (
+        (points[..., None, 0] >= lower[None, None, :, 0])
+        & (points[..., None, 0] <= upper[None, None, :, 0])
+        & (points[..., None, 1] >= lower[None, None, :, 1])
+        & (points[..., None, 1] <= upper[None, None, :, 1])
+    )
+    depth = (upper[None, None, :, 2] - points[..., None, 2] - float(min_depth)).clamp(0.0, max_depth)
+    return torch.where(inside_xy, depth, torch.zeros_like(depth)).amax(dim=-1)
 
 
 def _resolve_depth(depth: float | tuple[float, float], difficulty: float) -> float:
@@ -271,6 +364,27 @@ class GapGasVisualizer:
             return
         self._marker.visualize(translations=boxes.centers, scales=boxes.sizes)
 
+    def visualize_terrain_planes(
+        self,
+        terrain_origins_w: Any,
+        sub_terrain_size: tuple[float, float] | None = None,
+        plane_z: float = 0.0,
+        thickness: float = 0.02,
+        *,
+        terrain_size: tuple[float, float] | None = None,
+    ) -> GapGasBoxes:
+        """Visualize fixed planes once and return the immutable geometry."""
+        if sub_terrain_size is None:
+            sub_terrain_size = terrain_size
+        boxes = terrain_penalty_planes(
+            terrain_origins_w,
+            sub_terrain_size=sub_terrain_size,
+            plane_z=plane_z,
+            thickness=thickness,
+        )
+        self.visualize(boxes)
+        return boxes
+
 # 区域下扎深度
 def gap_penetration_depth(
     points_w: Any,
@@ -315,7 +429,11 @@ def ray_gap_gas_boxes(
     min_depth: float = 0.05,
     max_boxes: int | None = None,
 ) -> GapGasBoxes:
-    """Create display-only boxes for the currently scanned low gap points."""
+    """Create legacy display-only boxes for currently scanned low-gap points.
+
+    The fixed terrain-plane path does not call this helper. It remains only
+    for compatibility with older debugging scripts.
+    """
     hits = torch.as_tensor(ray_hits_w).detach().cpu()
     if hits.ndim != 3 or hits.shape[-1] != 3:
         raise ValueError(f"ray_hits_w must have shape (N, R, 3), got {tuple(hits.shape)}")
@@ -341,7 +459,7 @@ def ray_gap_gas_boxes(
 
 
 class GapPenetrationPenalty(ManagerTermBase):
-    """Penalize body parts that enter a scanned gap for a sustained duration."""
+    """Penalize body parts below a fixed plane covering their terrain tile."""
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
@@ -356,27 +474,53 @@ class GapPenetrationPenalty(ManagerTermBase):
     def __call__(
         self,
         env,
-        sensor_cfg,
         asset_cfg,
-        support_radius: float = 0.35,
         min_depth: float = 0.05,
         depth_scale: float = 1.0,
         duration_scale: float = 0.5,
         max_depth: float = 2.5,
+        sub_terrain_size: tuple[float, float] | None = None,
+        plane_z: float = 0.0,
+        plane_thickness: float = 0.02,
+        support_radius: float = 0.35,
+        sensor_cfg=None,
+        terrain_size: tuple[float, float] | None = None,
     ) -> torch.Tensor:
         asset = env.scene[asset_cfg.name]
-        hits = env.scene.sensors[sensor_cfg.name].data.ray_hits_w
         # Use each link's center of mass as the representative body point.
-        # This is still a point approximation, not the full collision shape.
+        # This remains a point approximation, but it is evaluated against a
+        # static plane tied to each terrain tile instead of a moving ray box.
         body = asset.data.body_com_pos_w[:, asset_cfg.body_ids]
-        valid = torch.isfinite(hits).all(dim=-1)
-        # -- scan for the nearest support surface below each body point, ignoring gaps
-        distance_sq = torch.sum((body[:, :, None, :2] - hits[:, None, :, :2]) ** 2, dim=-1)
-        nearby = valid[:, None, :] & (distance_sq <= support_radius**2)
-        support = torch.where(nearby, hits[:, None, :, 2], torch.full_like(hits[:, None, :, 2], -torch.inf)).amax(-1)
-        support = torch.where(nearby.any(-1), support, body[..., 2])
-        depth = (support - body[..., 2] - min_depth).clamp(0.0, max_depth).amax(1)
+        terrain = getattr(env.scene, "terrain", None)
+        if terrain is None or terrain.terrain_origins is None:
+            return torch.zeros(body.shape[0], device=body.device, dtype=body.dtype)
+        if sub_terrain_size is None:
+            sub_terrain_size = terrain_size
+        if sub_terrain_size is None:
+            generator_cfg = getattr(terrain.cfg, "terrain_generator", None)
+            if generator_cfg is None:
+                return torch.zeros(body.shape[0], device=body.device, dtype=body.dtype)
+            sub_terrain_size = tuple(generator_cfg.size)
+        # Environment origins are the currently assigned fixed terrain tile
+        # origins. They only change when curriculum reassigns an environment,
+        # never as a consequence of robot motion.
+        plane_centers = env.scene.env_origins.to(device=body.device, dtype=body.dtype).clone()
+        plane_centers[:, 2] += float(plane_z) - 0.5 * float(plane_thickness)
+        plane_sizes = torch.empty_like(plane_centers)
+        plane_sizes[:, 0] = float(sub_terrain_size[0])
+        plane_sizes[:, 1] = float(sub_terrain_size[1])
+        plane_sizes[:, 2] = float(plane_thickness)
+        depth = terrain_penalty_plane_depth(
+            body,
+            plane_centers,
+            plane_sizes,
+            min_depth=min_depth,
+            max_depth=max_depth,
+        ).amax(1)
         inside = depth > 0.0
-        # -- accumulate time spent inside the gap volume, reset when outside
+
+        # -- accumulate time spent below the fixed penalty plane
         self.inside_time = torch.where(inside, self.inside_time + env.step_dt, torch.zeros_like(self.inside_time))
-        return (depth / max(depth_scale, 1.0e-6)).clamp(0.0, 1.0) * (self.inside_time / max(duration_scale, 1.0e-6)).clamp(0.0, 1.0)
+        depth_factor = (depth / max(depth_scale, 1.0e-6)).clamp(0.0, 1.0)
+        duration_factor = (self.inside_time / max(duration_scale, 1.0e-6)).clamp(0.0, 1.0)
+        return depth_factor * duration_factor

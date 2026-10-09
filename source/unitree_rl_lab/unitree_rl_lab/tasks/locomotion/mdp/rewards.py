@@ -356,4 +356,4 @@ def heading_error(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntit
     target_dist = torch.norm(command_term.pos_command_w[:, :2] - asset.data.root_pos_w[:, :2], dim=1,)
     active = target_dist > command_term.cfg.target_dis_threshold
     # print(f"heading_cmd: {heading_cmd.mean().item():.3f}, ang_vel_error: {ang_vel_error.mean().item():.3f}") # DEBUG
-    return heading_cmd * (1.0 - torch.exp(-ang_vel_error / 0.7**2)) * active
+    return heading_cmd * (1.0 - torch.exp(-ang_vel_error / 0.5**2)) * active

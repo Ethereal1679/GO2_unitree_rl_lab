@@ -172,11 +172,24 @@ def main():
     if args_cli.gap_gas_enable_viz:
         from unitree_rl_lab.tasks.locomotion.terrains.penalty_gap_gas import (
             GapGasVisualizer,
-            ray_gap_gas_boxes,
         )
 
         gap_gas_visualizer = GapGasVisualizer(enabled=True)
-        gap_gas_cell_size = float(env_cfg.scene.height_scanner.pattern_cfg.resolution)
+        terrain_cfg = env_cfg.scene.terrain.terrain_generator
+        terrain = env.unwrapped.scene.terrain
+        terrain_origins = terrain.terrain_origins if terrain is not None else None
+        if terrain_origins is None:
+            print("[INFO] Gap-gas visualization skipped: no generated sub-terrain origins.")
+        else:
+            gap_term = getattr(getattr(env_cfg, "rewards", None), "gap_penetration", None)
+            gap_params = getattr(gap_term, "params", {}) or {}
+            terrain_origins = terrain_origins.reshape(-1, 3)
+            gap_gas_visualizer.visualize_terrain_planes(
+                terrain_origins,
+                sub_terrain_size=tuple(gap_params.get("sub_terrain_size", terrain_cfg.size)),
+                plane_z=float(gap_params.get("plane_z", 0.0)),
+                thickness=float(gap_params.get("plane_thickness", 0.02)),
+            )
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
@@ -250,9 +263,6 @@ def main():
     obs = env.get_observations()
     timestep = 0
     attention_step = 0
-    if gap_gas_visualizer is not None:
-        sensor = env.unwrapped.scene.sensors["height_scanner"]
-        gap_gas_visualizer.visualize(ray_gap_gas_boxes(sensor.data.ray_hits_w, gap_gas_cell_size))
     # simulate environment
     with torch.inference_mode():
         if attention_viz_enabled:
@@ -271,9 +281,6 @@ def main():
         # env stepping
         obs, _, _, _ = env.step(actions)
         attention_step += 1
-        if gap_gas_visualizer is not None:
-            sensor = env.unwrapped.scene.sensors["height_scanner"]
-            gap_gas_visualizer.visualize(ray_gap_gas_boxes(sensor.data.ray_hits_w, gap_gas_cell_size))
 
         # Compute the next action. On update frames this same inference also
         # supplies attention for the current height-scan marker positions.

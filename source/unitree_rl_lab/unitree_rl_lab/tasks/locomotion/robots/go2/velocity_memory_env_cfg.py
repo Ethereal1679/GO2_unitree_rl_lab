@@ -309,11 +309,12 @@ class RewardsCfg:
     feet_stumble = RewTerm(func=mdp.feet_stumble,weight=-1.0,params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),},) 
     gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-3.0,
         params={
-            "sensor_cfg": SceneEntityCfg("height_scanner"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_(foot|calf|thigh|hip)|base"),
-            "support_radius": 0.35, # 有效半径，单位 m，表示在这个半径范围内的地面点会被认为是支撑点
             "min_depth": 0.05, "max_depth": 2.0,
             "depth_scale": 0.40, "duration_scale": 0.50,
+            "sub_terrain_size": COMPLEX_RANDOM_CFG.size,
+            "plane_z": 0.0,
+            "plane_thickness": 0.02,
         },
     )
 
