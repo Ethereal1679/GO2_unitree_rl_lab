@@ -23,10 +23,11 @@ import isaaclab.terrains as terrain_gen
 from isaaclab.terrains import FlatPatchSamplingCfg
 from unitree_rl_lab.tasks.locomotion.terrains.terrains import (
     HfConcentricGapTerrainCfg,
+    HfIBridgeTerrainCfg,
     HfSteppingStonesTerrainCfg
 )
 
-
+# goal patch位置
 def _cardinal_target_patches() -> dict[str, FlatPatchSamplingCfg]:
     """Sample targets on the flat midpoint of each terrain border."""
     ranges = {
@@ -100,8 +101,16 @@ COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
             flat_patch_sampling=_cardinal_target_patches(),
         ),
         "hf_steppingstones": HfSteppingStonesTerrainCfg(
-            proportion=0.2, stone_height_max=0.05, stone_width_range=(0.35, 0.5), stone_distance_range=(0.1, 0.15), platform_width=2.0,
+            proportion=0.2, stone_height_max=0.05, stone_width_range=(0.3, 0.4), stone_distance_range=(0.1, 0.15), platform_width=2.0,
             holes_depth=(-0.1, -2.0), border_width=1.0,
+            flat_patch_sampling=_cardinal_target_patches(),
+        ),
+        "hf_i_bridge": HfIBridgeTerrainCfg(
+            proportion=0.2,
+            bridge_width=(0.6, 0.2),
+            platform_width=1.5,
+            holes_depth=(-0.1, -2.0),
+            border_width=1.0,
             flat_patch_sampling=_cardinal_target_patches(),
         ),
     },

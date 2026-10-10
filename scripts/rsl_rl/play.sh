@@ -16,6 +16,6 @@ LOADRUN_NAME="2026-10-02_23-34-35_no_resume-ABLATION-rm_gap_penetration_penalty-
 python "${SCRIPT_DIR}/py/play.py" \
     --task g1_lidar \
     --num_envs 64 \
-    --load_run 2026-10-08_23-05-32_no_resume-g1-init-heading_scale-2.0 \
-    --height_scan_gradient_viz \
-    # --gap_gas_enable_viz \
+    --load_run 2026-10-09_19-36-47_no_resume-add_ibridge \
+    --gap_gas_enable_viz \
+    # --height_scan_gradient_viz \

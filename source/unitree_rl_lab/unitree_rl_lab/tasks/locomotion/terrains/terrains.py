@@ -56,13 +56,18 @@ def _make_square_annulus(
 
 # == gap地形，来源 https://github.com/SII-FUSC/AME_Locomotion
 
+def _resolve_curriculum_value(value: float | tuple[float, float], difficulty: float) -> float:
+    """Resolve a fixed value or a ``(difficulty=0, difficulty=1)`` range."""
+    if isinstance(value, (tuple, list)):
+        if len(value) != 2:
+            raise ValueError(f"curriculum range must contain exactly two values, got {value}")
+        return float(value[0]) + float(difficulty) * (float(value[1]) - float(value[0]))
+    return float(value)
+
+
 def _resolve_depth(depth: float | tuple[float, float], difficulty: float) -> float:
     """Resolve a fixed depth or a curriculum range in meters."""
-    if isinstance(depth, (tuple, list)):
-        if len(depth) != 2:
-            raise ValueError(f"depth range must contain exactly two values, got {depth}")
-        return float(depth[0]) + float(difficulty) * (float(depth[1]) - float(depth[0]))
-    return float(depth)
+    return _resolve_curriculum_value(depth, difficulty)
 
 @height_field_to_mesh
 def concentric_gap_terrain(difficulty: float, cfg: HfConcentricGapTerrainCfg) -> np.ndarray:
@@ -245,3 +250,67 @@ class HfSteppingStonesTerrainCfg(HfTerrainBaseCfg):
 
     platform_width: float = 1.0
     """The width of the square platform at the center of the terrain. Defaults to 1.0."""
+
+
+@height_field_to_mesh
+def i_bridge_terrain(difficulty: float, cfg: HfIBridgeTerrainCfg) -> np.ndarray:
+    """Generate a four-way bridge around a square center platform.
+
+    Two perpendicular, configurable-width bridge strips connect the center
+    platform to all four edges. Everything outside the bridge is a depressed
+    hole, so the robot can start on the center platform and walk in any
+    cardinal direction.
+    """
+    if cfg.horizontal_scale <= 0.0 or cfg.vertical_scale <= 0.0:
+        raise ValueError("horizontal_scale and vertical_scale must be positive")
+
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+    bridge_width_m = _resolve_curriculum_value(cfg.bridge_width, difficulty)
+    bridge_width = int(round(bridge_width_m / cfg.horizontal_scale))
+    platform_width = int(round(cfg.platform_width / cfg.horizontal_scale))
+    holes_depth_m = _resolve_curriculum_value(cfg.holes_depth, difficulty)
+    holes_depth = int(round(holes_depth_m / cfg.vertical_scale))
+
+    if bridge_width <= 0 or platform_width <= 0:
+        raise ValueError("bridge_width and platform_width must be at least one height-field cell")
+    if bridge_width > min(width_pixels, length_pixels):
+        raise ValueError("bridge_width must fit within the terrain size")
+    if platform_width > min(width_pixels, length_pixels):
+        raise ValueError("platform_width must fit within the terrain size")
+    if holes_depth >= 0:
+        raise ValueError("holes_depth must be negative to create depressed ground")
+
+    hf_raw = np.full((width_pixels, length_pixels), holes_depth, dtype=np.int16)
+
+    # The two full-length strips form four connected bridge arms.
+    x1 = (width_pixels - bridge_width) // 2
+    y1 = (length_pixels - bridge_width) // 2
+    hf_raw[x1 : x1 + bridge_width, :] = 0
+    hf_raw[:, y1 : y1 + bridge_width] = 0
+
+    # Keep the center platform square and aligned with the center of each axis.
+    platform_x1 = (width_pixels - platform_width) // 2
+    platform_y1 = (length_pixels - platform_width) // 2
+    hf_raw[
+        platform_x1 : platform_x1 + platform_width,
+        platform_y1 : platform_y1 + platform_width,
+    ] = 0
+
+    return hf_raw
+
+
+@configclass
+class HfIBridgeTerrainCfg(HfTerrainBaseCfg):
+    """Configuration for a four-way narrow bridge height-field terrain."""
+
+    function = i_bridge_terrain
+
+    bridge_width: float | tuple[float, float] = 0.5
+    """Bridge width in meters, or its ``(difficulty=0, difficulty=1)`` range."""
+
+    platform_width: float = 1.5
+    """Width of the square center platform in meters."""
+
+    holes_depth: float | tuple[float, float] = -2.0
+    """Hole depth in meters, or its ``(difficulty=0, difficulty=1)`` range."""

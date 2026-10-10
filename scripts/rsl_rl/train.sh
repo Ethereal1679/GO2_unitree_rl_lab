@@ -34,9 +34,9 @@ python "${SCRIPT_DIR}/py/train.py" \
     --task g1_lidar \
     --logger tensorboard \
     --num_envs 4096 \
-    --run_name "no_resume-g1-init-heading_scale-2.0" \
+    --run_name "no_resume-add_ibridge" \
     --max_iterations 99999999 \
     --headless \
     # --resume \
-    # --load_run 2026-10-08_19-58-40_no_resume-g1-init \
+    # --load_run 2026-10-08_23-05-32_no_resume-g1-init-heading_scale-2.0 \
 
