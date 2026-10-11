@@ -27,7 +27,7 @@ HEIGHT_SCAN_MARKER_CFG = RAY_CASTER_MARKER_CFG.replace(
 
 
 class HeightScanGradientVisualizer:
-    """Color the RayCaster's existing scan dots by temporal height-rate magnitude."""
+    """Color the RayCaster's existing scan dots by temporal height-difference magnitude."""
 
     def __init__(
         self,

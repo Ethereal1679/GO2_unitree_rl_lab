@@ -1,11 +1,11 @@
-"""Actor-critic with a convolutional height-map autoencoder.
+"""Actor-critic with a convolutional height-map variational autoencoder.
 
 The actor observation is expected to end with a flattened map containing
 ``map_channels`` channels in channel-major order.  For the default G1 setup
-the tail is ``[height_scan(16x11), height_gradient(16x11)]``.  The encoder
-turns that tail into a latent vector used by the actor MLP; the decoder is
-trained with PPO through :meth:`compute_auxiliary_loss` to reconstruct the
-same two-channel map.
+the tail is ``[height_scan(17x11), height_gradient(17x11)]``. The CNN-VAE
+encodes that tail as a latent distribution. The actor uses its deterministic
+mean, while the decoder and KL regularizer are trained with PPO through
+:meth:`compute_auxiliary_loss`.
 """
 
 from __future__ import annotations
@@ -35,12 +35,12 @@ def _activation(name: str) -> nn.Module:
     raise ValueError(f"Unsupported CNN activation '{name}'.")
 
 
-class HeightMapCNN(nn.Module):
-    """Convolutional encoder and transposed-convolutional decoder."""
+class HeightMapCNNVAE(nn.Module):
+    """Convolutional variational encoder and transposed-convolutional decoder."""
 
     def __init__(
         self,
-        map_shape: tuple[int, int] = (16, 11),
+        map_shape: tuple[int, int] = (17, 11),
         map_channels: int = 2,
         latent_dim: int = 32,
         cnn_channels: Sequence[int] = (32, 64, 128),
@@ -54,11 +54,25 @@ class HeightMapCNN(nn.Module):
         if len(cnn_channels) != 3 or any(int(size) <= 0 for size in cnn_channels):
             raise ValueError("cnn_channels must contain three positive channel sizes.")
 
-        self.map_shape = (int(map_shape[0]), int(map_shape[1]))
+        self.map_height = int(map_shape[0])
+        self.map_width = int(map_shape[1])
+        self.map_shape = (self.map_height, self.map_width)
         self.map_channels = int(map_channels)
         self.latent_dim = int(latent_dim)
-        self.map_dim = self.map_channels * self.map_shape[0] * self.map_shape[1]
+        self.map_dim = self.map_channels * self.map_height * self.map_width
         c1, c2, c3 = (int(size) for size in cnn_channels)
+        first_height = (self.map_height + 1) // 2
+        first_width = (self.map_width + 1) // 2
+        second_height = (first_height + 1) // 2
+        second_width = (first_width + 1) // 2
+        first_output_padding = (
+            first_height - (2 * second_height - 1),
+            first_width - (2 * second_width - 1),
+        )
+        second_output_padding = (
+            self.map_height - (2 * first_height - 1),
+            self.map_width - (2 * first_width - 1),
+        )
         self.encoder_conv = nn.Sequential(
             nn.Conv2d(self.map_channels, c1, kernel_size=3, padding=1),
             _activation(activation),
@@ -68,59 +82,124 @@ class HeightMapCNN(nn.Module):
             _activation(activation),
         )
         with torch.no_grad():
-            feature_shape = self.encoder_conv(torch.zeros(1, self.map_channels, *self.map_shape)).shape[1:]
-        self._feature_shape = tuple(int(size) for size in feature_shape)
-        feature_dim = int(torch.tensor(self._feature_shape).prod().item())
-        self.encoder_fc = nn.Linear(feature_dim, self.latent_dim)
+            feature_shape = self.encoder_conv(
+                torch.zeros(1, self.map_channels, self.map_height, self.map_width)
+            ).shape
+        self.feature_channels = int(feature_shape[1])
+        self.feature_height = int(feature_shape[2])
+        self.feature_width = int(feature_shape[3])
+        feature_dim = self.feature_channels * self.feature_height * self.feature_width
+        self.encoder_mean = nn.Linear(feature_dim, self.latent_dim)
+        self.encoder_log_var = nn.Linear(feature_dim, self.latent_dim)
         self.decoder_fc = nn.Linear(self.latent_dim, feature_dim)
         self.decoder_deconv = nn.Sequential(
-            # For 4x3 -> 8x6, both dimensions need one output pixel.
-            nn.ConvTranspose2d(c3, c2, kernel_size=3, stride=2, padding=1, output_padding=1),
+            # Mirror both stride-2 encoder stages exactly. For a 17 x 11 map
+            # this reconstructs 5 x 3 -> 9 x 6 -> 17 x 11.
+            nn.ConvTranspose2d(
+                c3,
+                c2,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                output_padding=first_output_padding,
+            ),
             _activation(activation),
-            # For 8x6 -> 16x11, the width needs no output padding.
-            nn.ConvTranspose2d(c2, c1, kernel_size=3, stride=2, padding=1, output_padding=(1, 0)),
+            nn.ConvTranspose2d(
+                c2,
+                c1,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                output_padding=second_output_padding,
+            ),
             _activation(activation),
             nn.Conv2d(c1, self.map_channels, kernel_size=3, padding=1),
         )
 
     def _check_map(self, height_map: torch.Tensor) -> torch.Tensor:
-        if height_map.ndim == 2:
-            expected = self.map_dim
-            if height_map.shape[-1] != expected:
-                raise ValueError(f"Expected flattened map with {expected} values, got {height_map.shape[-1]}.")
-            return height_map.reshape(-1, self.map_channels, *self.map_shape)
-        expected_shape = (self.map_channels, *self.map_shape)
-        if tuple(height_map.shape[-3:]) != expected_shape:
-            raise ValueError(f"Expected map shape (..., {expected_shape}), got {tuple(height_map.shape)}.")
-        return height_map.reshape(-1, *expected_shape)
+        # TorchScript cannot infer tuple sizes created from ``tensor.shape``
+        # slices or starred tuple expansion. Keep every dimension explicit.
+        if height_map.dim() == 2:
+            if height_map.size(1) != self.map_dim:
+                raise ValueError("Flattened height-map dimension does not match map_channels * height * width.")
+            return height_map.reshape(-1, self.map_channels, self.map_height, self.map_width)
+        if height_map.dim() != 4:
+            raise ValueError("Height map must be a rank-2 flattened tensor or a rank-4 NCHW tensor.")
+        if (
+            height_map.size(1) != self.map_channels
+            or height_map.size(2) != self.map_height
+            or height_map.size(3) != self.map_width
+        ):
+            raise ValueError("Height-map NCHW dimensions do not match the configured map shape.")
+        return height_map.reshape(-1, self.map_channels, self.map_height, self.map_width)
 
-    def encode(self, height_map: torch.Tensor) -> torch.Tensor:
+    def encode(self, height_map: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the mean and log-variance of ``q(z | height_map)``."""
+
         map_tensor = self._check_map(height_map)
         features = self.encoder_conv(map_tensor)
-        return self.encoder_fc(features.flatten(start_dim=1))
+        flattened_features = features.flatten(start_dim=1)
+        mean = self.encoder_mean(flattened_features)
+        # Bounding log-variance prevents numerical overflow early in PPO training.
+        log_var = self.encoder_log_var(flattened_features).clamp(min=-20.0, max=10.0)
+        return mean, log_var
+
+    @staticmethod
+    def reparameterize(mean: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
+        """Draw a differentiable sample from the encoded latent distribution."""
+
+        std = torch.exp(0.5 * log_var)
+        return mean + torch.randn_like(std) * std
 
     def decode(self, latent: torch.Tensor) -> torch.Tensor:
-        if latent.ndim != 2 or latent.shape[-1] != self.latent_dim:
-            raise ValueError(f"Expected latent shape (N, {self.latent_dim}), got {tuple(latent.shape)}.")
-        features = self.decoder_fc(latent).reshape(-1, *self._feature_shape)
+        if latent.dim() != 2 or latent.size(1) != self.latent_dim:
+            raise ValueError("Latent tensor does not match the configured latent dimension.")
+        features = self.decoder_fc(latent).reshape(
+            -1, self.feature_channels, self.feature_height, self.feature_width
+        )
         reconstruction = self.decoder_deconv(features)
         # Keep the module valid for custom map dimensions whose stride-2
         # geometry does not invert exactly.
-        if reconstruction.shape[-2:] != self.map_shape:
-            reconstruction = F.interpolate(reconstruction, size=self.map_shape, mode="bilinear", align_corners=False)
+        if reconstruction.size(2) != self.map_height or reconstruction.size(3) != self.map_width:
+            reconstruction = F.interpolate(
+                reconstruction,
+                size=[self.map_height, self.map_width],
+                mode="bilinear",
+                align_corners=False,
+            )
         return reconstruction
 
-    def forward(self, height_map: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, height_map: torch.Tensor, sample: bool = True
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         map_tensor = self._check_map(height_map)
-        latent = self.encode(map_tensor)
+        mean, log_var = self.encode(map_tensor)
+        latent = self.reparameterize(mean, log_var) if sample else mean
         reconstruction = self.decode(latent)
-        return reconstruction, latent
+        return reconstruction, mean, log_var, latent
+
+    def loss(
+        self, height_map: torch.Tensor, beta: float = 1.0
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Compute the beta-VAE reconstruction and KL losses."""
+
+        map_tensor = self._check_map(height_map)
+        reconstruction, mean, log_var, _ = self(map_tensor, sample=True)
+        reconstruction_loss = F.mse_loss(reconstruction, map_tensor)
+        kl_loss = -0.5 * torch.mean(
+            torch.sum(1.0 + log_var - mean.square() - log_var.exp(), dim=-1)
+        )
+        total_loss = reconstruction_loss + beta * kl_loss
+        return total_loss, {
+            "cnn_vae_reconstruction": reconstruction_loss,
+            "cnn_vae_kl": kl_loss,
+        }
 
 
 class _GradCNNActor(nn.Module):
     """Actor wrapper retaining the exporter-compatible ``in_features`` field."""
 
-    def __init__(self, map_encoder: HeightMapCNN, policy: nn.Module, policy_obs_dim: int):
+    def __init__(self, map_encoder: HeightMapCNNVAE, policy: nn.Module, policy_obs_dim: int):
         super().__init__()
         self.map_encoder = map_encoder
         self.policy = policy
@@ -134,24 +213,26 @@ class _GradCNNActor(nn.Module):
 
     def split_input(self, actor_input: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         expected = self.in_features
-        if actor_input.ndim != 2 or actor_input.shape[-1] != expected:
-            raise ValueError(f"Expected actor input shape (N, {expected}), got {tuple(actor_input.shape)}.")
+        if actor_input.dim() != 2 or actor_input.size(1) != expected:
+            raise ValueError("Actor input does not match proprioception plus flattened height-map dimensions.")
         return actor_input[..., : self.policy_obs_dim], actor_input[..., self.policy_obs_dim :]
 
-    def encode_map(self, height_map: torch.Tensor) -> torch.Tensor:
-        return self.map_encoder.encode(height_map)
+    def encode_map(self, height_map: torch.Tensor, sample: bool = False) -> torch.Tensor:
+        mean, log_var = self.map_encoder.encode(height_map)
+        return self.map_encoder.reparameterize(mean, log_var) if sample else mean
 
     def decode_map(self, latent: torch.Tensor) -> torch.Tensor:
         return self.map_encoder.decode(latent)
 
     def forward(self, actor_input: torch.Tensor) -> torch.Tensor:
         policy_obs, height_map = self.split_input(actor_input)
-        latent = self.encode_map(height_map)
+        # Deterministic latents keep PPO likelihood ratios and exported policies stable.
+        latent = self.encode_map(height_map, sample=False)
         return self.policy(torch.cat((policy_obs, latent), dim=-1))
 
 
 class ActorCriticGradCNN(nn.Module):
-    """PPO actor-critic using a two-channel height-map convolutional latent."""
+    """PPO actor-critic using a two-channel height-map CNN-VAE latent."""
 
     is_recurrent = False
 
@@ -167,11 +248,12 @@ class ActorCriticGradCNN(nn.Module):
         activation="elu",
         init_noise_std=1.0,
         noise_std_type: str = "scalar",
-        map_shape: tuple[int, int] = (16, 11),
+        map_shape: tuple[int, int] = (17, 11),
         map_channels: int = 2,
         latent_dim: int = 32,
         cnn_channels=(32, 64, 128),
         reconstruction_loss_coef: float = 1.0,
+        vae_beta: float = 1.0e-3,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -182,8 +264,11 @@ class ActorCriticGradCNN(nn.Module):
             )
         if reconstruction_loss_coef < 0.0:
             raise ValueError("reconstruction_loss_coef must be non-negative.")
+        if vae_beta < 0.0:
+            raise ValueError("vae_beta must be non-negative.")
         self.obs_groups = obs_groups
         self.reconstruction_loss_coef = float(reconstruction_loss_coef)
+        self.vae_beta = float(vae_beta)
         self.map_shape = (int(map_shape[0]), int(map_shape[1]))
         self.map_channels = int(map_channels)
         self.map_dim = self.map_channels * self.map_shape[0] * self.map_shape[1]
@@ -198,7 +283,7 @@ class ActorCriticGradCNN(nn.Module):
         self.policy_obs_dim = self.actor_obs_dim - self.map_dim
         self.critic_obs_dim = int(critic_obs.shape[-1])
 
-        map_encoder = HeightMapCNN(
+        map_encoder = HeightMapCNNVAE(
             map_shape=self.map_shape,
             map_channels=self.map_channels,
             latent_dim=latent_dim,
@@ -216,8 +301,8 @@ class ActorCriticGradCNN(nn.Module):
         self.critic_obs_normalizer = (
             EmpiricalNormalization(self.critic_obs_dim) if critic_obs_normalization else nn.Identity()
         )
-        print(f"Height-map CNN autoencoder: {self.actor.map_encoder}")
-        print(f"CNN actor: {self.actor.policy}")
+        print(f"Height-map CNN-VAE: {self.actor.map_encoder}")
+        print(f"CNN-VAE actor: {self.actor.policy}")
         print(f"Critic MLP: {self.critic}")
 
         self.noise_std_type = noise_std_type
@@ -315,21 +400,39 @@ class ActorCriticGradCNN(nn.Module):
         actor_input = self._actor_input(obs)
         return self._map_from_actor_input(actor_input).reshape(-1, self.map_channels, *self.map_shape)
 
-    def get_height_map_latent(self, obs) -> torch.Tensor:
-        return self.actor.map_encoder.encode(self._map_from_actor_input(self._actor_input(obs)))
+    def get_height_map_reconstruction(
+        self, obs, env_id: int | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the CNN input map and its decoder reconstruction.
 
-    def compute_auxiliary_loss(self, obs) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Return the decoder reconstruction loss consumed by PPO."""
+        When ``env_id`` is provided, only that environment is decoded. This
+        keeps live play-mode visualization inexpensive with many environments.
+        """
+
+        actor_input = self._actor_input(obs)
+        if env_id is not None:
+            if env_id < 0 or env_id >= actor_input.shape[0]:
+                raise ValueError(f"env_id {env_id} is outside batch size {actor_input.shape[0]}.")
+            actor_input = actor_input[env_id : env_id + 1]
+        map_input = self._map_from_actor_input(actor_input)
+        original = map_input.reshape(-1, self.map_channels, *self.map_shape)
+        reconstruction, _, _, _ = self.actor.map_encoder(map_input, sample=False)
+        return original, reconstruction
+
+    def get_height_map_latent(self, obs, sample: bool = False) -> torch.Tensor:
+        """Return the latent mean, or a sample when requested."""
 
         map_input = self._map_from_actor_input(self._actor_input(obs))
-        reconstruction, _ = self.actor.map_encoder(map_input)
-        target = map_input.reshape(-1, self.map_channels, *self.map_shape)
-        reconstruction_loss = F.mse_loss(reconstruction, target)
-        total_loss = self.reconstruction_loss_coef * reconstruction_loss
-        return total_loss, {
-            "cnn_reconstruction": reconstruction_loss,
-            "cnn_reconstruction_total": total_loss,
-        }
+        return self.actor.encode_map(map_input, sample=sample)
+
+    def compute_auxiliary_loss(self, obs) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Return the weighted beta-VAE loss consumed by PPO."""
+
+        map_input = self._map_from_actor_input(self._actor_input(obs))
+        vae_loss, loss_terms = self.actor.map_encoder.loss(map_input, beta=self.vae_beta)
+        weighted_vae_loss = self.reconstruction_loss_coef * vae_loss
+        loss_terms["cnn_vae_total"] = weighted_vae_loss
+        return weighted_vae_loss, loss_terms
 
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)
@@ -348,3 +451,6 @@ class ActorCriticGradCNN(nn.Module):
 # Keep the explicit class available under a short conventional alias for
 # callers that select policies by a class name in a YAML/config file.
 ActorCritic = ActorCriticGradCNN
+
+# Preserve the old helper name for callers that import it directly.
+HeightMapCNN = HeightMapCNNVAE

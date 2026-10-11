@@ -34,7 +34,7 @@ python "${SCRIPT_DIR}/py/train.py" \
     --task g1_lidar \
     --logger tensorboard \
     --num_envs 2048 \
-    --run_name "grad_two_channels" \
+    --run_name "cnn-vae" \
     --max_iterations 99999999 \
     --headless \
     # --resume \

@@ -348,9 +348,9 @@ class PoseVelocityCommand(CommandTerm):
             # print(f"vx={self.vel_command_b[:, 0].max().item():.3f}, vy={self.vel_command_b[:, 1].max().item():.3f}")
             print(
                 f"cmd mean: "
-                f"vx={self.vel_command_b[:, 0].mean().item():.3f}, "
-                f"|vx|={self.vel_command_b[:, 0].abs().mean().item():.3f}, "
-                f"|vy|={self.vel_command_b[:, 1].abs().mean().item():.3f}, "
+                f"vx={self.vel_command_b[60:, 0].mean().item():.3f}, "
+                f"|vx|={self.vel_command_b[60:, 0].abs().mean().item():.3f}, "
+                f"|vy|={self.vel_command_b[60:, 1].abs().mean().item():.3f}, "
                 f"speed={lin_speed.mean().item():.3f}; "
                 f"speed<0.3={(lin_speed < 0.2).sum().item()}, "
                 f"zero={(lin_speed < 1e-4).sum().item()}; "

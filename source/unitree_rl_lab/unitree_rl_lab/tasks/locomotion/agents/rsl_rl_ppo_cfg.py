@@ -26,7 +26,7 @@ class RslRlPpoActorCriticGradCNNCfg(RslRlPpoActorCriticCfg):
     """Actor-critic with a two-channel height-map CNN autoencoder."""
 
     class_name: str = "ActorCriticGradCNN"
-    map_shape: tuple[int, int] = (16, 11)
+    map_shape: tuple[int, int] = (17, 11)
     map_channels: int = 2
     latent_dim: int = 32
     cnn_channels: list[int] = [32, 64, 128]
@@ -160,7 +160,7 @@ class G1GradCNNRunnerCfg(BasePPORunnerCfg):
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
-        map_shape=(16, 11),
+        map_shape=(17, 11),
         map_channels=2,
         latent_dim=32,
         cnn_channels=[32, 64, 128],

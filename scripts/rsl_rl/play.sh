@@ -16,6 +16,10 @@ LOADRUN_NAME="2026-10-02_23-34-35_no_resume-ABLATION-rm_gap_penetration_penalty-
 python "${SCRIPT_DIR}/py/play.py" \
     --task g1_lidar \
     --num_envs 64 \
-    --load_run 2026-10-09_19-36-47_no_resume-add_ibridge \
+    --load_run 2026-10-10_16-56-57_grad_two_channels \
+    # --grad_cnn_map_viz \
+    # --grad_cnn_map_env_id 0 \
+    # --grad_cnn_map_viz_interval 5 \
+    # --grad_cnn_map_pixel_size 16 \
     # --height_scan_gradient_viz \
     # --gap_gas_enable_viz \
