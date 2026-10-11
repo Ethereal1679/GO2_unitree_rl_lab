@@ -60,7 +60,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(
             resolution=0.1,
-            size=[1.5, 1.0],
+            size=[1.6, 1.0], # 加1保证奇数
             ordering="xy",
         ),
         debug_vis=False,
@@ -227,14 +227,21 @@ class ObservationsCfg:
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, noise=Unoise(n_min=-1.5, n_max=1.5))
         last_action = ObsTerm(func=mdp.last_action)
         # gait_phase = ObsTerm(func=mdp.gait_phase, params={"period": 0.8})
+        # The CNN receives the final two terms as channel-major maps:
+        # raw height scan followed by the aligned temporal height gradient.
         height_scanner = ObsTerm(
-            func=mdp.map_scan_points,
+            func=mdp.height_scan_points,
             params={
                 "sensor_cfg": SceneEntityCfg("height_scanner"),
                 "asset_cfg": SceneEntityCfg("robot"),
-                "grid_shape": (16, 11),
+                "grid_shape": (17, 11),
                 "noise": True,
             },
+            clip=(-100.0, 100.0),
+        )
+        height_scan_gradient = ObsTerm(
+            func=mdp.height_scan_gradient,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
             clip=(-100.0, 100.0),
         )
 
@@ -259,11 +266,11 @@ class ObservationsCfg:
         joint_effort = ObsTerm(func=mdp.joint_effort, scale=0.01, clip=(-100, 100))
         last_action = ObsTerm(func=mdp.last_action)
         height_scanner = ObsTerm(
-            func=mdp.map_scan_points,
+            func=mdp.height_scan_points,
             params={
                 "sensor_cfg": SceneEntityCfg("height_scanner"),
                 "asset_cfg": SceneEntityCfg("robot"),
-                "grid_shape": (16, 11),
+                "grid_shape": (17, 11),
                 "noise": False,
             },
             clip=(-100.0, 100.0),
@@ -283,11 +290,11 @@ class RewardsCfg:
     # -- task
     track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
     track_ang_vel_z = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=1.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
-    heading_error = RewTerm(func=mdp.heading_error, weight=-2.0,) # 如果target生成在后方，机器人会学会原地转弯利用vel的正向clamp来始终追踪小速度奖励
+    heading_error = RewTerm(func=mdp.heading_error, weight=-3.0,) # 如果target生成在后方，机器人会学会原地转弯利用vel的正向clamp来始终追踪小速度奖励
 
 
     # -- basic
-    # alive = RewTerm(func=mdp.is_alive, weight=0.1)
+    alive = RewTerm(func=mdp.is_alive, weight=0.1)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
@@ -309,8 +316,8 @@ class RewardsCfg:
     undesired_contacts = RewTerm(func=mdp.undesired_contacts,weight=-1.0,params={"threshold": 1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["(?!.*ankle.*).*"]),},)
     gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-3.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*"),
-            "min_depth": 0.05, "max_depth": 2.0,
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot_hook1"),
+            "min_depth": 0.0, "max_depth": 2.0,
             "depth_scale": 0.40, "duration_scale": 0.50,
             "sub_terrain_size": COMPLEX_RANDOM_CFG.size,
             "plane_z": -0.07,
@@ -329,18 +336,6 @@ class RewardsCfg:
     joint_deviation_waists = RewTerm(func=mdp.joint_deviation_l1, weight=-1.0,params={"asset_cfg": SceneEntityCfg("robot",joint_names=["waist.*",],)},)
     joint_deviation_legs = RewTerm(func=mdp.joint_deviation_l1, weight=-1.0,params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_roll_joint", ".*_hip_yaw_joint"])},)
 
-
-    # gait = RewTerm(
-    #     func=mdp.feet_gait,
-    #     weight=0.5,
-    #     params={
-    #         "period": 0.8,
-    #         "offset": [0.0, 0.5],
-    #         "threshold": 0.55,
-    #         "command_name": "base_velocity",
-    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_roll.*"),
-    #     },
-    # )
 
 
 
@@ -417,3 +412,7 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.scene.terrain.max_init_terrain_level = self.scene.terrain.terrain_generator.num_rows
         self.scene.height_scanner.debug_vis = True # 开启调试可视化
         self.commands.base_velocity.debug_vis = True # 开启调试可视化
+        # 关闭dr
+        self.events.push_robot = None
+        self.events.base_external_force_torque = None
+        

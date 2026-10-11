@@ -22,6 +22,18 @@ class RslRlPpoActorCriticVAECfg(RslRlPpoActorCriticCfg):
 
 
 @configclass
+class RslRlPpoActorCriticGradCNNCfg(RslRlPpoActorCriticCfg):
+    """Actor-critic with a two-channel height-map CNN autoencoder."""
+
+    class_name: str = "ActorCriticGradCNN"
+    map_shape: tuple[int, int] = (16, 11)
+    map_channels: int = 2
+    latent_dim: int = 32
+    cnn_channels: list[int] = [32, 64, 128]
+    reconstruction_loss_coef: float = 1.0
+
+
+@configclass
 class AttentionVisualizationCfg:
     """Runtime options for attention coloring in the play script."""
 
@@ -133,4 +145,24 @@ class G1VAERunnerCfg(BasePPORunnerCfg):
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
         latent_dim=16,
+    )
+
+
+# ========= CNN + height-gradient G1 ==========
+@configclass
+class G1GradCNNRunnerCfg(BasePPORunnerCfg):
+    """G1 PPO with raw height and temporal height-gradient map channels."""
+
+    policy = RslRlPpoActorCriticGradCNNCfg(
+        init_noise_std=1.0,
+        actor_obs_normalization=False,
+        critic_obs_normalization=False,
+        actor_hidden_dims=[512, 256, 128],
+        critic_hidden_dims=[512, 256, 128],
+        activation="elu",
+        map_shape=(16, 11),
+        map_channels=2,
+        latent_dim=32,
+        cnn_channels=[32, 64, 128],
+        reconstruction_loss_coef=1.0,
     )

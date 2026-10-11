@@ -2,7 +2,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
-from whole_body_tracking.assets import ASSET_DIR
+from . import ASSET_DIR
 
 ARMATURE_5020 = 0.003609725
 ARMATURE_7520_14 = 0.010177520
@@ -26,8 +26,12 @@ G1_CYLINDER_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
         fix_base=False,
         replace_cylinders_with_capsules=True,
-        # asset_path=f"{ASSET_DIR}/unitree_description/urdf/g1/main.urdf",
-        asset_path=f"{ASSET_DIR}/g1_description/urdf/g1_23dof.urdf",
+        # Use the project URDF, which contains the non-colliding foot hook
+        # links used by the gap-penetration reward.
+        asset_path=f"{ASSET_DIR}/g1_23dof_description/urdf/g1_23dof.urdf",
+        # Keep fixed hook links as separate rigid bodies so SceneEntityCfg can
+        # resolve left/right_foot_hook1. Their URDF has visual geometry only.
+        merge_fixed_joints=False,
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -217,7 +221,6 @@ for a in G1_CYLINDER_CFG.actuators.values():
     for n in names:
         if n in e and n in s and s[n]:
             G1_ACTION_SCALE[n] = 0.25 * e[n] / s[n]
-
 
 
 

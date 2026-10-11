@@ -107,7 +107,7 @@ COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
         ),
         "hf_i_bridge": HfIBridgeTerrainCfg(
             proportion=0.2,
-            bridge_width=(0.6, 0.2),
+            bridge_width=(0.6, 0.4),
             platform_width=1.5,
             holes_depth=(-0.1, -2.0),
             border_width=1.0,

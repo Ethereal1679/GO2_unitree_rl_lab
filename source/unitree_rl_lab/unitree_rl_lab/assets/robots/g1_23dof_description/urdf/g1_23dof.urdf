@@ -200,8 +200,8 @@
     <limit lower="-0.87267" upper="0.5236" effort="35" velocity="30"/>
   </joint>
 
-<!-- 新建一个“虚拟子 link”，专门放球体表示手掌/支撑点 -->
-<link name="left_foot_hook">
+<!-- 脚底判断触发点 start -->
+<link name="left_foot_hook0">
   <inertial>
     <origin xyz="0 0 0" rpy="0 0 0"/>
     <mass value="0.01"/>
@@ -214,15 +214,62 @@
       <sphere radius="0.01"/>
     </geometry>
     <material name="foot_sphere">
-      <color rgba="0.0 1.0 0.0 0.7"/>
+      <color rgba="1.0 0.0 0.0 0.7"/>
     </material>
   </visual>
 </link>
-<joint name="left_foot_hook_sphere_fixed" type="fixed">
+<joint name="left_foot_hook0_sphere_fixed" type="fixed">
   <parent link="left_ankle_pitch_link"/>
-  <child link="left_foot_hook"/>
-  <origin xyz="0.1 0. 0" rpy="0 0 0"/>
+  <child link="left_foot_hook0"/>
+  <origin xyz="0.035 0. -0.05" rpy="0 0 0"/>
 </joint>
+
+<link name="left_foot_hook1">
+  <inertial>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <mass value="0.01"/>
+    <inertia ixx="1e-4" ixy="0.0" ixz="0.0"
+             iyy="1e-4" iyz="0.0" izz="1e-4"/>
+  </inertial>
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <sphere radius="0.01"/>
+    </geometry>
+    <material name="foot_sphere">
+      <color rgba="1.0 0.0 0.0 0.7"/>
+    </material>
+  </visual>
+</link>
+<joint name="left_foot_hook1_sphere_fixed" type="fixed">
+  <parent link="left_ankle_pitch_link"/>
+  <child link="left_foot_hook1"/>
+  <origin xyz="0.11 0. -0.05" rpy="0 0 0"/>
+</joint>
+
+<link name="left_foot_hook2">
+  <inertial>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <mass value="0.01"/>
+    <inertia ixx="1e-4" ixy="0.0" ixz="0.0"
+             iyy="1e-4" iyz="0.0" izz="1e-4"/>
+  </inertial>
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <sphere radius="0.01"/>
+    </geometry>
+    <material name="foot_sphere">
+      <color rgba="1.0 0.0 0.0 0.7"/>
+    </material>
+  </visual>
+</link>
+<joint name="left_foot_hook2_sphere_fixed" type="fixed">
+  <parent link="left_ankle_pitch_link"/>
+  <child link="left_foot_hook2"/>
+  <origin xyz="-0.04 0. -0.05" rpy="0 0 0"/>
+</joint>
+<!-- 脚底判断触发点 end -->
 
 
   <link name="left_ankle_roll_link">
@@ -418,8 +465,8 @@
     <limit lower="-0.87267" upper="0.5236" effort="35" velocity="30"/>
   </joint>
 
-<!-- 新建一个“虚拟子 link”，专门放球体表示手掌/支撑点 -->
-<link name="right_foot_hook">
+<!-- 脚底判断触发点 start -->
+<link name="right_foot_hook0">
   <inertial>
     <origin xyz="0 0 0" rpy="0 0 0"/>
     <mass value="0.01"/>
@@ -432,15 +479,62 @@
       <sphere radius="0.01"/>
     </geometry>
     <material name="foot_sphere">
-      <color rgba="0.0 1.0 0.0 0.7"/>
+      <color rgba="0.0 0.0 1.0 0.7"/>
     </material>
   </visual>
 </link>
-<joint name="right_foot_hook_sphere_fixed" type="fixed">
+<joint name="right_foot_hook0_sphere_fixed" type="fixed">
   <parent link="right_ankle_pitch_link"/>
-  <child link="right_foot_hook"/>
-  <origin xyz="0.1 0. 0" rpy="0 0 0"/>
+  <child link="right_foot_hook0"/>
+  <origin xyz="0.035 0. -0.05" rpy="0 0 0"/>
 </joint>
+
+<link name="right_foot_hook1">
+  <inertial>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <mass value="0.01"/>
+    <inertia ixx="1e-4" ixy="0.0" ixz="0.0"
+             iyy="1e-4" iyz="0.0" izz="1e-4"/>
+  </inertial>
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <sphere radius="0.01"/>
+    </geometry>
+    <material name="foot_sphere">
+      <color rgba="0.0 0.0 1.0 0.7"/>
+    </material>
+  </visual>
+</link>
+<joint name="right_foot_hook1_sphere_fixed" type="fixed">
+  <parent link="right_ankle_pitch_link"/>
+  <child link="right_foot_hook1"/>
+  <origin xyz="0.11 0. -0.05" rpy="0 0 0"/>
+</joint>
+
+<link name="right_foot_hook2">
+  <inertial>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <mass value="0.01"/>
+    <inertia ixx="1e-4" ixy="0.0" ixz="0.0"
+             iyy="1e-4" iyz="0.0" izz="1e-4"/>
+  </inertial>
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <sphere radius="0.01"/>
+    </geometry>
+    <material name="foot_sphere">
+      <color rgba="0.0 0.0 1.0 0.7"/>
+    </material>
+  </visual>
+</link>
+<joint name="right_foot_hook2_sphere_fixed" type="fixed">
+  <parent link="right_ankle_pitch_link"/>
+  <child link="right_foot_hook2"/>
+  <origin xyz="-0.04 0. -0.05" rpy="0 0 0"/>
+</joint>
+<!-- 脚底判断触发点 end -->
 
 
   <link name="right_ankle_roll_link">
@@ -792,40 +886,6 @@
   </collision>
 </link>
 
-
-
-<link name="left_hand_hook">
-  <inertial>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <mass value="0.01"/>
-    <inertia ixx="1e-4" ixy="0.0" ixz="0.0"
-             iyy="1e-4" iyz="0.0" izz="1e-4"/>
-  </inertial>
-  <visual>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <geometry>
-      <sphere radius="0.01"/>
-    </geometry>
-    <material name="hand_sphere">
-      <color rgba="0.0 1.0 0.0 0.7"/>
-    </material>
-  </visual>
-  <!-- 修改后的碰撞体：半径 0.2m 的球 -->
-  <collision>
-    <origin xyz="0.0 0.02 0" rpy="0 0 0"/>
-    <geometry>
-      <sphere radius="0.07"/>
-    </geometry>
-  </collision>
-</link>
-<joint name="left_wrist_roll_rubber_hand_sphere_fixed" type="fixed">
-  <parent link="left_wrist_roll_rubber_hand"/>
-  <child link="left_hand_hook"/>
-  <origin xyz="0.2 -0.02 0" rpy="0 0 0"/>
-</joint>
-
-
-
   <link name="right_shoulder_pitch_link">
     <inertial>
       <origin xyz="0 -0.035892 -0.011628" rpy="0 0 0"/>
@@ -976,39 +1036,6 @@
   </link>
 
 
-<!-- 新建一个“虚拟子 link”，专门放球体表示手掌/支撑点 -->
-<link name="right_hand_hook">
-  <!-- 惯量可以给一个很小的值，或者跟球体真实质量一致，看你需求 -->
-  <inertial>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <mass value="0.01"/>
-    <inertia ixx="1e-4" ixy="0.0" ixz="0.0"
-             iyy="1e-4" iyz="0.0" izz="1e-4"/>
-  </inertial>
-  <!-- 可选的可视化：用球显示碰撞位置（方便调试） -->
-  <visual>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-    <geometry>
-      <sphere radius="0.01"/>
-    </geometry>
-    <material name="hand_sphere">
-      <color rgba="0.0 1.0 0.0 0.7"/>
-    </material>
-  </visual>
-    <!-- 修改后的碰撞体：半径 0.2m 的球 -->
-  <collision>
-    <origin xyz="0.0 -0.02 0" rpy="0 0 0"/>
-    <geometry>
-      <sphere radius="0.07"/>
-    </geometry>
-  </collision>
-</link>
-<!-- 固定关节：以手为父，球体 link 为子 -->
-<joint name="right_wrist_roll_rubber_hand_sphere_fixed" type="fixed">
-  <parent link="right_wrist_roll_rubber_hand"/>
-  <child link="right_hand_hook"/>
-  <origin xyz="0.2 0.02 0" rpy="0 0 0"/>
-</joint>
 
 
 </robot>

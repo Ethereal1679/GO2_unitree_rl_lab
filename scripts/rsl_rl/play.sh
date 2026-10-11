@@ -17,5 +17,5 @@ python "${SCRIPT_DIR}/py/play.py" \
     --task g1_lidar \
     --num_envs 64 \
     --load_run 2026-10-09_19-36-47_no_resume-add_ibridge \
-    --gap_gas_enable_viz \
     # --height_scan_gradient_viz \
+    # --gap_gas_enable_viz \

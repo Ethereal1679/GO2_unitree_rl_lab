@@ -97,11 +97,11 @@ def height_scan_with_delay(
     return state["buffer"][state["delay_frames"], env_ids]
 
 
-def map_scan_points(
+def height_scan_points(
     env: ManagerBasedRLEnv,
     sensor_cfg,
     asset_cfg,
-    grid_shape: tuple[int, int] = (16, 11),
+    grid_shape: tuple[int, int] = (17, 11),
     noise: bool = False,
 ) -> torch.Tensor:
     """Return ray-hit XYZ points in base frame as a flat observation tail.
@@ -126,6 +126,7 @@ def map_scan_points(
     if ray_hits_b.shape[1] != expected_points:
         raise RuntimeError(f"Expected {expected_points} map points for grid {grid_shape}, got {ray_hits_b.shape[1]}")
 
+    # 添加height scan噪声
     if noise:
         num_envs = ray_hits_b.shape[0]
         offset = getattr(env, "_map_scan_points_offset", None)

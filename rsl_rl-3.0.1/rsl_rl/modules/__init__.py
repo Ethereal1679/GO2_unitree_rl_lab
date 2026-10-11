@@ -7,6 +7,7 @@
 
 from .actor_critic import ActorCritic
 from .actor_critic_attention import AttentionMapActorCritic
+from .actor_critic_grad_cnn import ActorCriticGradCNN
 from .actor_critic_vae import ActorCriticVAE, HeightMapVAE
 from .actor_critic_recurrent import ActorCriticRecurrent
 from .attention_policy import AttentionMapActor, AttentionMapEncoder, Go2AttentionPolicy
@@ -18,6 +19,7 @@ from .symmetry import *
 __all__ = [
     "ActorCritic",
     "AttentionMapActorCritic",
+    "ActorCriticGradCNN",
     "AttentionMapActor",
     "AttentionMapEncoder",
     "ActorCriticVAE",
