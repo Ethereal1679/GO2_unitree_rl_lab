@@ -61,7 +61,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         pattern_cfg=patterns.GridPatternCfg(
             resolution=0.1,
             size=[1.6, 1.0], # 加1保证奇数
-            ordering="xy",
+            ordering="yx", # -x -> +x | -y -> +y
         ),
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
@@ -183,16 +183,16 @@ class CommandsCfg:
         # 随机clamp速度上限，不代表真实速度
         # NOTE 这里都是速度上限随机化，不存在负数
         velocity_ranges={
-            "pyramid_stairs": {
-                "lin_vel_x": (0.45, 1.0),
-                "lin_vel_y": (0.0, 0.0),
-                "ang_vel_z": (-1.0, 1.0),
-            },
-            "pyramid_stairs_inv": {
-                "lin_vel_x": (0.45, 1.0),
-                "lin_vel_y": (0.0, 0.0),
-                "ang_vel_z": (-1.0, 1.0),
-            },
+            # "pyramid_stairs": {
+            #     "lin_vel_x": (0.45, 1.0),
+            #     "lin_vel_y": (0.0, 0.0),
+            #     "ang_vel_z": (-1.0, 1.0),
+            # },
+            # "pyramid_stairs_inv": {
+            #     "lin_vel_x": (0.45, 1.0),
+            #     "lin_vel_y": (0.0, 0.0),
+            #     "ang_vel_z": (-1.0, 1.0),
+            # },
             "hf_gaps": {
                 "lin_vel_x": (0.45, 1.0),
                 "lin_vel_y": (0.0, 0.0),
@@ -242,8 +242,7 @@ class ObservationsCfg:
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, noise=Unoise(n_min=-1.5, n_max=1.5))
         last_action = ObsTerm(func=mdp.last_action)
         # gait_phase = ObsTerm(func=mdp.gait_phase, params={"period": 0.8})
-        # The CNN receives the final two terms as channel-major maps:
-        # raw actor-frame height followed by its temporal difference.
+        # Each scan is yaw-aligned; GradCNN converts two history frames to height and height rate.
         height_scanner = ObsTerm(
             func=mdp.height_scan_points,
             params={
@@ -253,19 +252,10 @@ class ObservationsCfg:
                 "offset": 0.0,
                 "noise": True,
             },
+            history_length=2,
+            flatten_history_dim=True,
             clip=(-100.0, 100.0),
         )
-        # height_scan_gradient = ObsTerm(
-        #     func=mdp.height_scan_gradient,
-        #     params={
-        #         "sensor_cfg": SceneEntityCfg("height_scanner"),
-        #         "asset_cfg": SceneEntityCfg("robot"),
-        #         "grid_shape": (17, 11),
-        #         "offset": 0.0,
-        #     },
-        #     clip=(-100.0, 100.0),
-        # )
-
         def __post_init__(self):
             # self.history_length = 5
             self.enable_corruption = True
@@ -316,7 +306,7 @@ class RewardsCfg:
 
 
     # -- basic
-    alive = RewTerm(func=mdp.is_alive, weight=0.1)
+    alive = RewTerm(func=mdp.is_alive, weight=0.5)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)

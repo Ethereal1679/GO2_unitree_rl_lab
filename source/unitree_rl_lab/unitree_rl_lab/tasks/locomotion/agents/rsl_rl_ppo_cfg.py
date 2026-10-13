@@ -36,11 +36,12 @@ class RslRlPpoActorCritic3DCNNVAECfg(RslRlPpoActorCriticVAECfg):
 
 @configclass
 class RslRlPpoActorCriticGradCNNCfg(RslRlPpoActorCriticCfg):
-    """Actor-critic with a two-channel height-map CNN autoencoder."""
+    """Actor-critic with current-height and height-rate CNN channels."""
 
     class_name: str = "ActorCriticGradCNN"
     map_shape: tuple[int, int] = (17, 11)
     map_channels: int = 2
+    height_scan_dt: float = 0.02
     latent_dim: int = 32
     cnn_channels: list[int] = [32, 64, 128]
     reconstruction_loss_coef: float = 1.0
@@ -161,10 +162,10 @@ class G1VAERunnerCfg(BasePPORunnerCfg):
     )
 
 
-# ========= CNN + height-gradient G1 ==========
+# ========= CNN-VAE + height-rate G1 ==========
 @configclass
 class G1GradCNNRunnerCfg(BasePPORunnerCfg):
-    """G1 PPO with raw height and temporal height-gradient map channels."""
+    """G1 PPO with current height and temporal height-rate map channels."""
 
     policy = RslRlPpoActorCriticGradCNNCfg(
         init_noise_std=1.0,
@@ -175,6 +176,7 @@ class G1GradCNNRunnerCfg(BasePPORunnerCfg):
         activation="elu",
         map_shape=(17, 11),
         map_channels=2,
+        height_scan_dt=0.02,
         latent_dim=32,
         cnn_channels=[32, 64, 128],
         reconstruction_loss_coef=1.0,

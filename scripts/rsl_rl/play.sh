@@ -21,5 +21,6 @@ export HEADLESS=0
 python "${SCRIPT_DIR}/py/play.py" \
     --task g1_lidar \
     --num_envs 64 \
-    --load_run 2026-10-12_16-38-02_3dcnn_predict-vae \
-    --3d_cnn_map_viz
+    --load_run 2026-10-11_23-42-03_cnn-vae \
+    --real-time \
+    --grad_cnn_map_viz

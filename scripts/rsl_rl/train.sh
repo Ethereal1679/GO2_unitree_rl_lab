@@ -34,7 +34,7 @@ python "${SCRIPT_DIR}/py/train.py" \
     --task g1_lidar \
     --logger tensorboard \
     --num_envs 4096 \
-    --run_name "g1_VAE-add_stair" \
+    --run_name "g1_grad_VAE-dt" \
     --max_iterations 99999999 \
     --headless \
     # --resume \

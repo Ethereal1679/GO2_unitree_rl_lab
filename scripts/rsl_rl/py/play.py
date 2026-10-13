@@ -61,13 +61,19 @@ parser.add_argument(
     "--height_scan_gradient_viz",
     action="store_true",
     default=False,
-    help="Color height-scan markers by the actor-frame temporal height difference.",
+    help="Color height-scan markers by the GradCNN actor-frame height rate.",
 )
 parser.add_argument(
     "--gap_gas_enable_viz",
     action="store_true",
     default=False,
     help="Show non-colliding green gap volumes in play mode.",
+)
+parser.add_argument(
+    "--grad_cnn_map_viz",
+    action="store_true",
+    default=False,
+    help="Show env 0's GradCNN input and reconstructed maps in an Isaac UI window.",
 )
 parser.add_argument(
     "--3d_cnn_map_viz",
@@ -193,12 +199,9 @@ def main():
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
-    height_gradient = None
     height_gradient_visualizer = None
-    height_gradient_asset = None
     height_gradient_waiting_for_markers = False
     if args_cli.height_scan_gradient_viz:
-        from unitree_rl_lab.tasks.locomotion.height_scan.height_scan_grad import HeightScanGradient
         from unitree_rl_lab.tasks.locomotion.height_scan.height_scan_visualization import (
             HeightScanGradientVisualizer,
         )
@@ -217,9 +220,7 @@ def main():
                 print("[WARNING] RayCaster marker visualization is unavailable; gradient visualization disabled.")
                 height_gradient_visualizer = None
             else:
-                height_gradient = HeightScanGradient()
-                height_gradient_asset = env.unwrapped.scene["robot"]
-                print("[INFO] Actor-frame temporal height-difference visualization enabled.")
+                print("[INFO] GradCNN height-rate visualization requested.")
 
     gap_gas_visualizer = None
     if args_cli.gap_gas_enable_viz:
@@ -267,6 +268,17 @@ def main():
     except AttributeError:
         # version 2.2 and below
         policy_nn = runner.alg.actor_critic
+
+    if height_gradient_visualizer is not None and not hasattr(policy_nn, "get_height_map"):
+        print("[WARNING] Height-rate visualization requires ActorCriticGradCNN; visualization disabled.")
+        height_gradient_visualizer = None
+
+    def update_height_gradient_visualizer(obs):
+        with torch.inference_mode():
+            height_map = policy_nn.get_height_map(obs)
+            height_rate = height_map[:, 1].flatten(start_dim=1)
+            valid_mask = torch.isfinite(height_gradient_visualizer.sensor.data.ray_hits_w).all(dim=-1)
+            return height_gradient_visualizer.update(height_rate, valid_mask)
 
     # extract the normalizer
     if hasattr(policy_nn, "actor_obs_normalizer"):
@@ -322,6 +334,29 @@ def main():
             except (ImportError, RuntimeError) as exc:
                 print(f"[WARNING] Unable to initialize 3D-CNN map visualization: {exc}")
 
+    grad_cnn_map_visualizer = None
+    if args_cli.grad_cnn_map_viz:
+        if not hasattr(policy_nn, "get_height_map_reconstruction") or int(
+            getattr(policy_nn, "map_channels", 0)
+        ) != 2:
+            print("[WARNING] --grad_cnn_map_viz requires ActorCriticGradCNN; visualization disabled.")
+        elif args_cli.headless:
+            print("[WARNING] --grad_cnn_map_viz requires the Isaac Sim GUI; visualization disabled in headless mode.")
+        elif env.unwrapped.num_envs < 1:
+            print("[WARNING] No environments are available for GradCNN map visualization.")
+        else:
+            try:
+                from unitree_rl_lab.utils.grad_cnn_map_visualization import GradCNNMapVisualizer
+
+                grad_cnn_map_visualizer = GradCNNMapVisualizer(
+                    policy_nn,
+                    env_id=0,
+                    num_envs=env.unwrapped.num_envs,
+                )
+                print("[INFO] GradCNN input and reconstruction maps enabled for env 0.", flush=True)
+            except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+                print(f"[WARNING] Unable to initialize GradCNN map visualization: {exc}")
+
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
     export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
@@ -336,16 +371,8 @@ def main():
     obs = env.get_observations()
     timestep = 0
     attention_step = 0
-    if height_gradient is not None:
-        reset_mask = getattr(env.unwrapped, "episode_length_buf", None)
-        if reset_mask is not None:
-            reset_mask = reset_mask == 0
-        height_difference, height_valid = height_gradient.update(
-            height_gradient_visualizer.sensor, height_gradient_asset, reset_mask=reset_mask
-        )
-        height_gradient_waiting_for_markers = not height_gradient_visualizer.update(
-            height_difference, height_valid
-        )
+    if height_gradient_visualizer is not None:
+        height_gradient_waiting_for_markers = not update_height_gradient_visualizer(obs)
         if height_gradient_waiting_for_markers:
             print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
     # simulate environment
@@ -362,20 +389,16 @@ def main():
             actions = policy(obs)
     if three_d_cnn_map_visualizer is not None:
         three_d_cnn_map_visualizer.update()
+    if grad_cnn_map_visualizer is not None:
+        grad_cnn_map_visualizer.update(obs)
 
     while simulation_app.is_running():
         start_time = time.time()
         # env stepping
         obs, _, _, _ = env.step(actions)
         attention_step += 1
-        if height_gradient is not None:
-            reset_mask = getattr(env.unwrapped, "episode_length_buf", None)
-            if reset_mask is not None:
-                reset_mask = reset_mask == 0
-            height_difference, height_valid = height_gradient.update(
-                height_gradient_visualizer.sensor, height_gradient_asset, reset_mask=reset_mask
-            )
-            updated = height_gradient_visualizer.update(height_difference, height_valid)
+        if height_gradient_visualizer is not None:
+            updated = update_height_gradient_visualizer(obs)
             if not updated and not height_gradient_waiting_for_markers:
                 print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
             height_gradient_waiting_for_markers = not updated
@@ -397,6 +420,8 @@ def main():
                 actions = policy(obs)
         if three_d_cnn_map_visualizer is not None:
             three_d_cnn_map_visualizer.update()
+        if grad_cnn_map_visualizer is not None:
+            grad_cnn_map_visualizer.update(obs)
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
@@ -411,6 +436,8 @@ def main():
     # close the simulator
     if three_d_cnn_map_visualizer is not None:
         three_d_cnn_map_visualizer.close()
+    if grad_cnn_map_visualizer is not None:
+        grad_cnn_map_visualizer.close()
     env.close()
 
 

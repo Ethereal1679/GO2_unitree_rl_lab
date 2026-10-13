@@ -78,22 +78,22 @@ COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
         # "hf_pyramid_slope_inv": terrain_gen.HfInvertedPyramidSlopedTerrainCfg(
         #     proportion=0.1, slope_range=(0.0, 0.4), platform_width=2.0, border_width=0.5
         # ),
-        "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
-            proportion=0.2,
-            step_height_range=(0.1, 0.25),
-            step_width=0.3,
-            platform_width=3.0,
-            border_width=1.0,
-            holes=False,
-        ),
-        "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
-            proportion=0.2,
-            step_height_range=(0.1, 0.25),
-            step_width=0.3,
-            platform_width=3.0,
-            border_width=1.0,
-            holes=False,
-        ),
+        # "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
+        #     proportion=0.2,
+        #     step_height_range=(0.1, 0.25),
+        #     step_width=0.3,
+        #     platform_width=3.0,
+        #     border_width=1.0,
+        #     holes=False,
+        # ),
+        # "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+        #     proportion=0.2,
+        #     step_height_range=(0.1, 0.25),
+        #     step_width=0.3,
+        #     platform_width=3.0,
+        #     border_width=1.0,
+        #     holes=False,
+        # ),
         "hf_gaps": HfConcentricGapTerrainCfg(
             proportion=0.2, gap_width_range=(0.1, 0.3), platform_width=2.0,
             gap_depth=(-0.1, -2.0), border_width=1.0,

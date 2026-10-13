@@ -1,13 +1,11 @@
-"""Actor-critic with a convolutional height-map variational autoencoder.
+"""Actor-critic with a VAE over current height and temporal height-rate maps.
 
-The actor observation is expected to end with a flattened map containing
-``map_channels`` channels in channel-major order.  For the default G1 setup
-the tail is ``[height_scan(17x11), height_gradient(17x11)]``. The CNN-VAE
-encodes that tail as a latent distribution. The actor uses its deterministic
-mean, while the decoder and KL regularizer are trained with PPO through
+The actor observation ends with two flattened, oldest-to-newest height scans.
+The actor converts them to ``[current_height, (current - previous) / dt]``
+before encoding the two-channel map. The actor uses the deterministic latent
+mean, while the decoder and KL regularizer are trained through
 :meth:`compute_auxiliary_loss`.
 """
-# log 直接使用历史高程图作差值，作为输入
 
 from __future__ import annotations
 
@@ -198,14 +196,22 @@ class HeightMapCNNVAE(nn.Module):
 
 
 class _GradCNNActor(nn.Module):
-    """Actor wrapper retaining the exporter-compatible ``in_features`` field."""
+    """Convert two height scans to height and rate maps before policy inference."""
 
-    def __init__(self, map_encoder: HeightMapCNNVAE, policy: nn.Module, policy_obs_dim: int):
+    def __init__(
+        self,
+        map_encoder: HeightMapCNNVAE,
+        policy: nn.Module,
+        policy_obs_dim: int,
+        height_scan_dt: float,
+    ):
         super().__init__()
         self.map_encoder = map_encoder
         self.policy = policy
         self.policy_obs_dim = int(policy_obs_dim)
-        self.in_features = self.policy_obs_dim + map_encoder.map_dim
+        self.map_history_dim = 2 * map_encoder.map_height * map_encoder.map_width
+        self.height_scan_dt = float(height_scan_dt)
+        self.in_features = self.policy_obs_dim + self.map_history_dim
 
     def __getitem__(self, index: int):
         if index != 0:
@@ -215,8 +221,20 @@ class _GradCNNActor(nn.Module):
     def split_input(self, actor_input: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         expected = self.in_features
         if actor_input.dim() != 2 or actor_input.size(1) != expected:
-            raise ValueError("Actor input does not match proprioception plus flattened height-map dimensions.")
+            raise ValueError("Actor input does not match proprioception plus two flattened height scans.")
         return actor_input[..., : self.policy_obs_dim], actor_input[..., self.policy_obs_dim :]
+
+    def height_map_from_history(self, height_history: torch.Tensor) -> torch.Tensor:
+        if height_history.dim() != 2 or height_history.size(1) != self.map_history_dim:
+            raise ValueError("Height history does not match two configured height scans.")
+        history = height_history.reshape(
+            -1, 2, self.map_encoder.map_height, self.map_encoder.map_width
+        )
+        # height_scan_points has already expressed each scan in the yaw frame.
+        previous = history[:, 0:1]
+        current = history[:, 1:2]
+        height_rate = (current - previous) / self.height_scan_dt
+        return torch.cat((current, height_rate), dim=1)
 
     def encode_map(self, height_map: torch.Tensor, sample: bool = False) -> torch.Tensor:
         mean, log_var = self.map_encoder.encode(height_map)
@@ -226,7 +244,8 @@ class _GradCNNActor(nn.Module):
         return self.map_encoder.decode(latent)
 
     def forward(self, actor_input: torch.Tensor) -> torch.Tensor:
-        policy_obs, height_map = self.split_input(actor_input)
+        policy_obs, height_history = self.split_input(actor_input)
+        height_map = self.height_map_from_history(height_history.flatten(start_dim=1))
         # Deterministic latents keep PPO likelihood ratios and exported policies stable.
         latent = self.encode_map(height_map, sample=False)
         return self.policy(torch.cat((policy_obs, latent), dim=-1))
@@ -251,6 +270,7 @@ class ActorCriticGradCNN(nn.Module):
         noise_std_type: str = "scalar",
         map_shape: tuple[int, int] = (17, 11),
         map_channels: int = 2,
+        height_scan_dt: float = 0.02,
         latent_dim: int = 32,
         cnn_channels=(32, 64, 128),
         reconstruction_loss_coef: float = 1.0,
@@ -267,21 +287,28 @@ class ActorCriticGradCNN(nn.Module):
             raise ValueError("reconstruction_loss_coef must be non-negative.")
         if vae_beta < 0.0:
             raise ValueError("vae_beta must be non-negative.")
+        if height_scan_dt <= 0.0:
+            raise ValueError("height_scan_dt must be positive.")
+        if map_channels != 2:
+            raise ValueError("ActorCriticGradCNN requires two map channels: current height and height rate.")
         self.obs_groups = obs_groups
         self.reconstruction_loss_coef = float(reconstruction_loss_coef)
         self.vae_beta = float(vae_beta)
+        self.height_scan_dt = float(height_scan_dt)
         self.map_shape = (int(map_shape[0]), int(map_shape[1]))
         self.map_channels = int(map_channels)
         self.map_dim = self.map_channels * self.map_shape[0] * self.map_shape[1]
+        self.map_history_dim = 2 * self.map_shape[0] * self.map_shape[1]
 
         actor_obs = self._flatten_groups(obs, obs_groups["policy"])
         critic_obs = self._flatten_groups(obs, obs_groups["critic"])
-        if actor_obs.shape[-1] <= self.map_dim:
+        if actor_obs.shape[-1] <= self.map_history_dim:
             raise ValueError(
-                f"Actor observation ({actor_obs.shape[-1]}) must contain proprioception plus map tail ({self.map_dim})."
+                f"Actor observation ({actor_obs.shape[-1]}) must contain proprioception plus two height scans "
+                f"({self.map_history_dim})."
             )
         self.actor_obs_dim = int(actor_obs.shape[-1])
-        self.policy_obs_dim = self.actor_obs_dim - self.map_dim
+        self.policy_obs_dim = self.actor_obs_dim - self.map_history_dim
         self.critic_obs_dim = int(critic_obs.shape[-1])
 
         map_encoder = HeightMapCNNVAE(
@@ -292,7 +319,7 @@ class ActorCriticGradCNN(nn.Module):
             activation=activation,
         )
         actor_policy = MLP(self.policy_obs_dim + latent_dim, num_actions, list(actor_hidden_dims), activation)
-        self.actor = _GradCNNActor(map_encoder, actor_policy, self.policy_obs_dim)
+        self.actor = _GradCNNActor(map_encoder, actor_policy, self.policy_obs_dim, self.height_scan_dt)
         self.actor_obs_normalization = actor_obs_normalization
         self.actor_obs_normalizer = (
             EmpiricalNormalization(self.actor_obs_dim) if actor_obs_normalization else nn.Identity()
@@ -357,8 +384,7 @@ class ActorCriticGradCNN(nn.Module):
         actor_obs = self._flatten_groups(obs, self.obs_groups["policy"])
         if actor_obs.shape[-1] != self.actor_obs_dim:
             raise ValueError(f"Expected {self.actor_obs_dim} actor observations, got {actor_obs.shape[-1]}.")
-        # The map is deliberately the final observation tail so term ordering
-        # determines the channel order: raw height first, temporal gradient second.
+        # The final observation term contains two scans, ordered oldest to newest.
         return actor_obs
 
     def get_critic_obs(self, obs):
@@ -370,8 +396,8 @@ class ActorCriticGradCNN(nn.Module):
     def _actor_input(self, obs) -> torch.Tensor:
         return self.actor_obs_normalizer(self.get_actor_obs(obs))
 
-    def _map_from_actor_input(self, actor_input: torch.Tensor) -> torch.Tensor:
-        return actor_input[..., -self.map_dim :]
+    def _map_history_from_actor_input(self, actor_input: torch.Tensor) -> torch.Tensor:
+        return actor_input[..., -self.map_history_dim :]
 
     def update_distribution(self, obs):
         actor_input = self._actor_input(obs)
@@ -396,10 +422,11 @@ class ActorCriticGradCNN(nn.Module):
         return self.critic(self.critic_obs_normalizer(self.get_critic_obs(obs)))
 
     def get_height_map(self, obs) -> torch.Tensor:
-        """Return the actor map as ``(N, channels, height, width)``."""
+        """Return current height and height rate as ``(N, 2, H, W)``."""
 
         actor_input = self._actor_input(obs)
-        return self._map_from_actor_input(actor_input).reshape(-1, self.map_channels, *self.map_shape)
+        history = self._map_history_from_actor_input(actor_input)
+        return self.actor.height_map_from_history(history)
 
     def get_height_map_reconstruction(
         self, obs, env_id: int | None = None
@@ -415,21 +442,25 @@ class ActorCriticGradCNN(nn.Module):
             if env_id < 0 or env_id >= actor_input.shape[0]:
                 raise ValueError(f"env_id {env_id} is outside batch size {actor_input.shape[0]}.")
             actor_input = actor_input[env_id : env_id + 1]
-        map_input = self._map_from_actor_input(actor_input)
-        original = map_input.reshape(-1, self.map_channels, *self.map_shape)
-        reconstruction, _, _, _ = self.actor.map_encoder(map_input, sample=False)
+        history = self._map_history_from_actor_input(actor_input)
+        original = self.actor.height_map_from_history(history)
+        reconstruction, _, _, _ = self.actor.map_encoder(original, sample=False)
         return original, reconstruction
 
     def get_height_map_latent(self, obs, sample: bool = False) -> torch.Tensor:
         """Return the latent mean, or a sample when requested."""
 
-        map_input = self._map_from_actor_input(self._actor_input(obs))
+        actor_input = self._actor_input(obs)
+        history = self._map_history_from_actor_input(actor_input)
+        map_input = self.actor.height_map_from_history(history)
         return self.actor.encode_map(map_input, sample=sample)
 
     def compute_auxiliary_loss(self, obs) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Return the weighted beta-VAE loss consumed by PPO."""
 
-        map_input = self._map_from_actor_input(self._actor_input(obs))
+        actor_input = self._actor_input(obs)
+        history = self._map_history_from_actor_input(actor_input)
+        map_input = self.actor.height_map_from_history(history)
         vae_loss, loss_terms = self.actor.map_encoder.loss(map_input, beta=self.vae_beta)
         weighted_vae_loss = self.reconstruction_loss_coef * vae_loss
         loss_terms["cnn_vae_total"] = weighted_vae_loss
