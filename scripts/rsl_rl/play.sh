@@ -2,6 +2,9 @@
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOADRUN_NAME="2026-10-02_23-34-35_no_resume-ABLATION-rm_gap_penetration_penalty-M"
 
+# OpenCV cv.imshow requires a desktop Isaac Sim session.
+export HEADLESS=0
+
 # python "${SCRIPT_DIR}/py/play.py" \
 #     --task go2_att \
 #     --num_envs 128 \
@@ -13,13 +16,10 @@ LOADRUN_NAME="2026-10-02_23-34-35_no_resume-ABLATION-rm_gap_penetration_penalty-
 
 
 
+# --height_scan_gradient_viz \
+# --gap_gas_enable_viz \
 python "${SCRIPT_DIR}/py/play.py" \
     --task g1_lidar \
     --num_envs 64 \
-    --load_run 2026-10-10_16-56-57_grad_two_channels \
-    # --grad_cnn_map_viz \
-    # --grad_cnn_map_env_id 0 \
-    # --grad_cnn_map_viz_interval 5 \
-    # --grad_cnn_map_pixel_size 16 \
-    # --height_scan_gradient_viz \
-    # --gap_gas_enable_viz \
+    --load_run 2026-10-12_16-38-02_3dcnn_predict-vae \
+    --3d_cnn_map_viz

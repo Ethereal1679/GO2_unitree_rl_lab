@@ -117,11 +117,16 @@ class PPO:
 
     def init_storage(self, training_type, num_envs, num_transitions_per_env, obs, actions_shape):
         # create rollout storage
+        storage_obs = (
+            self.policy.get_storage_observation_template(obs)
+            if hasattr(self.policy, "get_storage_observation_template")
+            else obs
+        )
         self.storage = RolloutStorage(
             training_type,
             num_envs,
             num_transitions_per_env,
-            obs,
+            storage_obs,
             actions_shape,
             self.device,
         )
@@ -136,7 +141,10 @@ class PPO:
         self.transition.action_mean = self.policy.action_mean.detach()
         self.transition.action_sigma = self.policy.action_std.detach()
         # need to record obs before env.step()
-        self.transition.observations = obs
+        if hasattr(self.policy, "prepare_observation_for_storage"):
+            self.transition.observations = self.policy.prepare_observation_for_storage(obs)
+        else:
+            self.transition.observations = obs
         return self.transition.actions
 
     def process_env_step(self, obs, rewards, dones, extras):
@@ -149,6 +157,13 @@ class PPO:
         # Note: we clone here because later on we bootstrap the rewards based on timeouts
         self.transition.rewards = rewards.clone()
         self.transition.dones = dones
+
+        # Some policies need information from s_(t+1) for an auxiliary loss.
+        # Attach it to the already prepared s_t transition before storage.
+        if hasattr(self.policy, "set_next_observation_for_storage"):
+            self.transition.observations = self.policy.set_next_observation_for_storage(
+                self.transition.observations, obs, dones
+            )
 
         # Compute the intrinsic rewards and add to extrinsic rewards
         if self.rnd:

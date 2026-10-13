@@ -183,6 +183,16 @@ class CommandsCfg:
         # 随机clamp速度上限，不代表真实速度
         # NOTE 这里都是速度上限随机化，不存在负数
         velocity_ranges={
+            "pyramid_stairs": {
+                "lin_vel_x": (0.45, 1.0),
+                "lin_vel_y": (0.0, 0.0),
+                "ang_vel_z": (-1.0, 1.0),
+            },
+            "pyramid_stairs_inv": {
+                "lin_vel_x": (0.45, 1.0),
+                "lin_vel_y": (0.0, 0.0),
+                "ang_vel_z": (-1.0, 1.0),
+            },
             "hf_gaps": {
                 "lin_vel_x": (0.45, 1.0),
                 "lin_vel_y": (0.0, 0.0),
@@ -242,19 +252,19 @@ class ObservationsCfg:
                 "grid_shape": (17, 11),
                 "offset": 0.0,
                 "noise": True,
-},
-            clip=(-100.0, 100.0),
-        )
-        height_scan_gradient = ObsTerm(
-            func=mdp.height_scan_gradient,
-            params={
-                "sensor_cfg": SceneEntityCfg("height_scanner"),
-                "asset_cfg": SceneEntityCfg("robot"),
-                "grid_shape": (17, 11),
-                "offset": 0.0,
             },
             clip=(-100.0, 100.0),
         )
+        # height_scan_gradient = ObsTerm(
+        #     func=mdp.height_scan_gradient,
+        #     params={
+        #         "sensor_cfg": SceneEntityCfg("height_scanner"),
+        #         "asset_cfg": SceneEntityCfg("robot"),
+        #         "grid_shape": (17, 11),
+        #         "offset": 0.0,
+        #     },
+        #     clip=(-100.0, 100.0),
+        # )
 
         def __post_init__(self):
             # self.history_length = 5
@@ -425,3 +435,5 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         # 关闭dr
         self.events.push_robot = None
         self.events.base_external_force_torque = None
+        # self.terminations.base_contact = None
+        self.terminations.time_out = None

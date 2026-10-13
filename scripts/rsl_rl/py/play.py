@@ -15,6 +15,16 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "rsl_rl-3.0.1"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Isaac Sim imports a headless OpenCV build through its pip bundle. Preload the
+# GUI-enabled Conda build before Isaac Sim starts so cv2.imshow remains usable.
+if "--3d_cnn_map_viz" in sys.argv:
+    try:
+        from unitree_rl_lab.utils.three_d_cnn_map_visualization import _load_gui_opencv
+
+        _load_gui_opencv()
+    except (ImportError, RuntimeError) as exc:
+        print(f"[WARNING] Could not preload GUI-enabled OpenCV: {exc}", flush=True)
+
 from isaaclab.app import AppLauncher
 
 # local imports
@@ -60,28 +70,11 @@ parser.add_argument(
     help="Show non-colliding green gap volumes in play mode.",
 )
 parser.add_argument(
-    "--grad_cnn_map_viz",
+    "--3d_cnn_map_viz",
     action="store_true",
     default=False,
-    help="Show GradCNN input and reconstructed height/gradient maps as pixel heatmaps.",
-)
-parser.add_argument(
-    "--grad_cnn_map_env_id",
-    type=int,
-    default=0,
-    help="Environment index shown by --grad_cnn_map_viz.",
-)
-parser.add_argument(
-    "--grad_cnn_map_viz_interval",
-    type=int,
-    default=5,
-    help="Simulation steps between GradCNN map heatmap updates.",
-)
-parser.add_argument(
-    "--grad_cnn_map_pixel_size",
-    type=int,
-    default=16,
-    help="Display pixels per GradCNN map value.",
+    dest="three_d_cnn_map_viz",
+    help="Show three history maps, the current map/reconstruction, and the 3D-CNN prediction in OpenCV.",
 )
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -90,12 +83,6 @@ AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 if args_cli.attention_enable_viz and args_cli.height_scan_gradient_viz:
     parser.error("--attention_enable_viz and --height_scan_gradient_viz both write height-scan dot colors.")
-if args_cli.grad_cnn_map_env_id < 0:
-    parser.error("--grad_cnn_map_env_id must be non-negative.")
-if args_cli.grad_cnn_map_viz_interval < 1:
-    parser.error("--grad_cnn_map_viz_interval must be at least 1.")
-if args_cli.grad_cnn_map_pixel_size < 1:
-    parser.error("--grad_cnn_map_pixel_size must be at least 1.")
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
@@ -315,52 +302,25 @@ def main():
     elif args_cli.attention_enable_viz:
         print("[WARNING] --attention_enable_viz requires the AttentionMapActorCritic policy; visualization disabled.")
 
-    grad_cnn_map_visualizer = None
-    if args_cli.grad_cnn_map_viz:
-        if policy_nn.__class__.__name__ != "ActorCriticGradCNN":
-            print("[WARNING] --grad_cnn_map_viz requires ActorCriticGradCNN; visualization disabled.")
+    print(
+        f"[INFO] 3D-CNN map visualization request: enabled={args_cli.three_d_cnn_map_viz}, "
+        f"policy={policy_nn.__class__.__name__}, headless={args_cli.headless}",
+        flush=True,
+    )
+    three_d_cnn_map_visualizer = None
+    if args_cli.three_d_cnn_map_viz:
+        if not hasattr(policy_nn, "get_temporal_height_map_reconstruction"):
+            print("[WARNING] --3d_cnn_map_viz requires ActorCritic3DCNNVAE; visualization disabled.")
         elif args_cli.headless:
-            print("[WARNING] --grad_cnn_map_viz requires the Isaac Sim GUI; visualization disabled in headless mode.")
-        elif args_cli.grad_cnn_map_env_id >= env.unwrapped.num_envs:
-            raise ValueError(
-                f"--grad_cnn_map_env_id must be below num_envs ({env.unwrapped.num_envs}), "
-                f"got {args_cli.grad_cnn_map_env_id}."
-            )
+            print("[WARNING] --3d_cnn_map_viz requires a desktop display; visualization disabled in headless mode.")
         else:
-            from unitree_rl_lab.utils.grad_cnn_map_visualization import GradCNNMapVisualizer
+            try:
+                from unitree_rl_lab.utils.three_d_cnn_map_visualization import ThreeDCNNMapVisualizer
 
-            observation_manager = env.unwrapped.observation_manager
-            policy_term_names = observation_manager.active_terms.get("policy", [])
-            policy_term_dims = observation_manager.group_obs_term_dim.get("policy", [])
-            expected_channel_dim = policy_nn.map_shape[0] * policy_nn.map_shape[1]
-            grad_cnn_channel_names = ("height", "gradient")
-            if len(policy_term_names) < 2 or len(policy_term_dims) < 2:
-                print(
-                    "[WARNING] Unable to verify the final two policy observation terms used as GradCNN map channels."
-                )
-                grad_cnn_channel_names = ("CNN channel 0", "CNN channel 1")
-            else:
-                tail_names = policy_term_names[-2:]
-                tail_dims = [int(torch.tensor(dim).prod().item()) for dim in policy_term_dims[-2:]]
-                if tail_dims != [expected_channel_dim, expected_channel_dim]:
-                    grad_cnn_channel_names = ("CNN channel 0", "CNN channel 1")
-                    print(
-                        "[WARNING] GradCNN map-channel contract mismatch: expected the final policy terms "
-                        f"to contain {expected_channel_dim} values each, but {tail_names} have dimensions "
-                        f"{tail_dims}. The heatmaps show the exact observation tail consumed by the checkpoint, "
-                        "which may not correspond to pure height and gradient channels."
-                    )
-            grad_cnn_map_visualizer = GradCNNMapVisualizer(
-                policy_nn,
-                env_id=args_cli.grad_cnn_map_env_id,
-                num_envs=env.unwrapped.num_envs,
-                pixel_size=args_cli.grad_cnn_map_pixel_size,
-                channel_names=grad_cnn_channel_names,
-            )
-            print(
-                f"[INFO] GradCNN map visualization enabled for env {args_cli.grad_cnn_map_env_id} "
-                f"(interval={args_cli.grad_cnn_map_viz_interval})."
-            )
+                three_d_cnn_map_visualizer = ThreeDCNNMapVisualizer(policy_nn)
+                print("[INFO] 3D-CNN map visualization enabled for env 0.")
+            except (ImportError, RuntimeError) as exc:
+                print(f"[WARNING] Unable to initialize 3D-CNN map visualization: {exc}")
 
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
@@ -376,7 +336,6 @@ def main():
     obs = env.get_observations()
     timestep = 0
     attention_step = 0
-    grad_cnn_map_step = 0
     if height_gradient is not None:
         reset_mask = getattr(env.unwrapped, "episode_length_buf", None)
         if reset_mask is not None:
@@ -389,8 +348,6 @@ def main():
         )
         if height_gradient_waiting_for_markers:
             print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
-    if grad_cnn_map_visualizer is not None:
-        grad_cnn_map_visualizer.update(obs)
     # simulate environment
     with torch.inference_mode():
         if attention_viz_enabled:
@@ -403,13 +360,14 @@ def main():
                 print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
         else:
             actions = policy(obs)
+    if three_d_cnn_map_visualizer is not None:
+        three_d_cnn_map_visualizer.update()
 
     while simulation_app.is_running():
         start_time = time.time()
         # env stepping
         obs, _, _, _ = env.step(actions)
         attention_step += 1
-        grad_cnn_map_step += 1
         if height_gradient is not None:
             reset_mask = getattr(env.unwrapped, "episode_length_buf", None)
             if reset_mask is not None:
@@ -421,12 +379,6 @@ def main():
             if not updated and not height_gradient_waiting_for_markers:
                 print("[INFO] Waiting for RayCaster height-scan markers to synchronize before coloring.")
             height_gradient_waiting_for_markers = not updated
-
-        if (
-            grad_cnn_map_visualizer is not None
-            and grad_cnn_map_step % args_cli.grad_cnn_map_viz_interval == 0
-        ):
-            grad_cnn_map_visualizer.update(obs)
 
         # Compute the next action. On update frames this same inference also
         # supplies attention for the current height-scan marker positions.
@@ -443,6 +395,8 @@ def main():
                 attention_viz_waiting_for_markers = not updated
             else:
                 actions = policy(obs)
+        if three_d_cnn_map_visualizer is not None:
+            three_d_cnn_map_visualizer.update()
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
@@ -455,8 +409,8 @@ def main():
             time.sleep(sleep_time)
 
     # close the simulator
-    if grad_cnn_map_visualizer is not None:
-        grad_cnn_map_visualizer.close()
+    if three_d_cnn_map_visualizer is not None:
+        three_d_cnn_map_visualizer.close()
     env.close()
 
 

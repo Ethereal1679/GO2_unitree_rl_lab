@@ -7,6 +7,7 @@ encodes that tail as a latent distribution. The actor uses its deterministic
 mean, while the decoder and KL regularizer are trained with PPO through
 :meth:`compute_auxiliary_loss`.
 """
+# log 直接使用历史高程图作差值，作为输入
 
 from __future__ import annotations
 

@@ -33,10 +33,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 python "${SCRIPT_DIR}/py/train.py" \
     --task g1_lidar \
     --logger tensorboard \
-    --num_envs 2048 \
-    --run_name "cnn-vae" \
+    --num_envs 4096 \
+    --run_name "g1_VAE-add_stair" \
     --max_iterations 99999999 \
     --headless \
     # --resume \
-    # --load_run 2026-10-08_23-05-32_no_resume-g1-init-heading_scale-2.0 \
+    # --load_run 2026-10-11_14-35-30_cnn-vae \
 

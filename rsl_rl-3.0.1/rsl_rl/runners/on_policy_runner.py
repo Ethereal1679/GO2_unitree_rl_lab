@@ -17,6 +17,7 @@ from rsl_rl.algorithms import PPO
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import (
     ActorCritic,
+    ActorCritic3DCNNVAE,
     ActorCriticRecurrent,
     ActorCriticGradCNN,
     ActorCriticVAE,
@@ -496,9 +497,14 @@ class OnPolicyRunner:
 
         # initialize the actor-critic
         actor_critic_class = eval(self.policy_cfg.pop("class_name"))
-        actor_critic: ActorCritic | ActorCriticRecurrent | ActorCriticGradCNN | ActorCriticVAE | AttentionMapActorCritic = (
-            actor_critic_class(obs, self.cfg["obs_groups"], self.env.num_actions, **self.policy_cfg).to(self.device)
-        )
+        actor_critic: (
+            ActorCritic
+            | ActorCriticRecurrent
+            | ActorCriticGradCNN
+            | ActorCriticVAE
+            | ActorCritic3DCNNVAE
+            | AttentionMapActorCritic
+        ) = actor_critic_class(obs, self.cfg["obs_groups"], self.env.num_actions, **self.policy_cfg).to(self.device)
 
         # initialize the algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))

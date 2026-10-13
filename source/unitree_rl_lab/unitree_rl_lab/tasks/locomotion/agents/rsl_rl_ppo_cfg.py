@@ -22,6 +22,19 @@ class RslRlPpoActorCriticVAECfg(RslRlPpoActorCriticCfg):
 
 
 @configclass
+class RslRlPpoActorCritic3DCNNVAECfg(RslRlPpoActorCriticVAECfg):
+    """VAE actor with a 3D-CNN predicting the next height-map latent."""
+
+    class_name: str = "ActorCritic3DCNNVAE"
+    temporal_history_frames: int = 3
+    # 2 selects t-6, t-4, t-2 and the current map t.
+    temporal_frame_interval: int = 1
+    temporal_map_shape: tuple[int, int] = (17, 11)
+    temporal_cnn_channels: list[int] = [16, 32, 64]
+    temporal_prediction_loss_coef: float = 1.0
+
+
+@configclass
 class RslRlPpoActorCriticGradCNNCfg(RslRlPpoActorCriticCfg):
     """Actor-critic with a two-channel height-map CNN autoencoder."""
 
@@ -165,4 +178,26 @@ class G1GradCNNRunnerCfg(BasePPORunnerCfg):
         latent_dim=32,
         cnn_channels=[32, 64, 128],
         reconstruction_loss_coef=1.0,
+    )
+
+
+
+# ========= 3D-CNN + VAE G1 ==========
+@configclass
+class G1_3DCNN_VAERunnerCfg(BasePPORunnerCfg):
+    """G1 PPO runner with current-map and predicted-future VAE latents."""
+
+    policy = RslRlPpoActorCritic3DCNNVAECfg(
+        init_noise_std=1.0,
+        actor_obs_normalization=False,
+        critic_obs_normalization=False,
+        actor_hidden_dims=[512, 256, 128],
+        critic_hidden_dims=[512, 256, 128],
+        activation="elu",
+        latent_dim=16,
+        temporal_history_frames=3,
+        temporal_frame_interval=1,
+        temporal_map_shape=(17, 11),
+        temporal_cnn_channels=[16, 32, 64],
+        temporal_prediction_loss_coef=1.0,
     )
