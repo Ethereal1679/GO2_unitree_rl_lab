@@ -61,7 +61,7 @@ parser.add_argument(
     "--height_scan_gradient_viz",
     action="store_true",
     default=False,
-    help="Color height-scan markers by the GradCNN actor-frame height rate.",
+    help="Color height-scan markers by the normalized actor-frame height difference.",
 )
 parser.add_argument(
     "--gap_gas_enable_viz",
@@ -202,10 +202,7 @@ def main():
     height_gradient_visualizer = None
     height_gradient_waiting_for_markers = False
     if args_cli.height_scan_gradient_viz:
-        from unitree_rl_lab.tasks.locomotion.height_scan.height_scan_visualization import (
-            HeightScanGradientVisualizer,
-        )
-
+        from unitree_rl_lab.tasks.locomotion.height_scan.height_scan_visualization import (HeightScanGradientVisualizer,)
         try:
             sensor = env.unwrapped.scene.sensors["height_scanner"]
         except (KeyError, TypeError):
@@ -220,7 +217,7 @@ def main():
                 print("[WARNING] RayCaster marker visualization is unavailable; gradient visualization disabled.")
                 height_gradient_visualizer = None
             else:
-                print("[INFO] GradCNN height-rate visualization requested.")
+                print("[INFO] GradCNN normalized height-difference visualization requested.")
 
     gap_gas_visualizer = None
     if args_cli.gap_gas_enable_viz:
@@ -270,15 +267,15 @@ def main():
         policy_nn = runner.alg.actor_critic
 
     if height_gradient_visualizer is not None and not hasattr(policy_nn, "get_height_map"):
-        print("[WARNING] Height-rate visualization requires ActorCriticGradCNN; visualization disabled.")
+        print("[WARNING] Height-difference visualization requires ActorCriticGradCNN; visualization disabled.")
         height_gradient_visualizer = None
 
     def update_height_gradient_visualizer(obs):
         with torch.inference_mode():
             height_map = policy_nn.get_height_map(obs)
-            height_rate = height_map[:, 1].flatten(start_dim=1)
+            height_difference = height_map[:, 1].flatten(start_dim=1)
             valid_mask = torch.isfinite(height_gradient_visualizer.sensor.data.ray_hits_w).all(dim=-1)
-            return height_gradient_visualizer.update(height_rate, valid_mask)
+            return height_gradient_visualizer.update(height_difference, valid_mask)
 
     # extract the normalizer
     if hasattr(policy_nn, "actor_obs_normalizer"):
@@ -347,10 +344,10 @@ def main():
         else:
             try:
                 from unitree_rl_lab.utils.grad_cnn_map_visualization import GradCNNMapVisualizer
-
+                # <>
                 grad_cnn_map_visualizer = GradCNNMapVisualizer(
                     policy_nn,
-                    env_id=0,
+                    env_id=40,
                     num_envs=env.unwrapped.num_envs,
                 )
                 print("[INFO] GradCNN input and reconstruction maps enabled for env 0.", flush=True)

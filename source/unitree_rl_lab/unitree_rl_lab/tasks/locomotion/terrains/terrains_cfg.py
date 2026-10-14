@@ -96,20 +96,20 @@ COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
         # ),
         "hf_gaps": HfConcentricGapTerrainCfg(
             proportion=0.2, gap_width_range=(0.1, 0.3), platform_width=2.0,
-            gap_depth=(-0.1, -2.0), border_width=1.0,
+            gap_depth=(-0.2, -2.0), border_width=1.0,
             ground_width_range=(0.5, 0.5), ground_height_max=0.025,
             flat_patch_sampling=_cardinal_target_patches(),
         ),
         "hf_steppingstones": HfSteppingStonesTerrainCfg(
             proportion=0.2, stone_height_max=0.05, stone_width_range=(0.3, 0.4), stone_distance_range=(0.1, 0.15), platform_width=2.0,
-            holes_depth=(-0.1, -2.0), border_width=1.0,
+            holes_depth=(-0.2, -1.5), border_width=1.0,
             flat_patch_sampling=_cardinal_target_patches(),
         ),
         "hf_i_bridge": HfIBridgeTerrainCfg(
             proportion=0.2,
             bridge_width=(0.6, 0.4),
             platform_width=1.5,
-            holes_depth=(-0.1, -2.0),
+            holes_depth=(-0.2, -1.5),
             border_width=1.0,
             flat_patch_sampling=_cardinal_target_patches(),
         ),

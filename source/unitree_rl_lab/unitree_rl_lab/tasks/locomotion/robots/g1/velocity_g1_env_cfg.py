@@ -242,7 +242,7 @@ class ObservationsCfg:
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, noise=Unoise(n_min=-1.5, n_max=1.5))
         last_action = ObsTerm(func=mdp.last_action)
         # gait_phase = ObsTerm(func=mdp.gait_phase, params={"period": 0.8})
-        # Each scan is yaw-aligned; GradCNN converts two history frames to height and height rate.
+        # The gradient term aligns the previous scan and computes its temporal difference.
         height_scanner = ObsTerm(
             func=mdp.height_scan_points,
             params={
@@ -252,8 +252,11 @@ class ObservationsCfg:
                 "offset": 0.0,
                 "noise": True,
             },
-            history_length=2,
-            flatten_history_dim=True,
+            clip=(-100.0, 100.0),
+        )
+        height_scan_gradient = ObsTerm(
+            func=mdp.height_scan_gradient,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner"),},
             clip=(-100.0, 100.0),
         )
         def __post_init__(self):
@@ -282,7 +285,7 @@ class ObservationsCfg:
                 "sensor_cfg": SceneEntityCfg("height_scanner"),
                 "asset_cfg": SceneEntityCfg("robot"),
                 "grid_shape": (17, 11),
-                "offset": 0.5,
+                "offset": 0.0, # 用不到
                 "noise": False,
             },
             clip=(-100.0, 100.0),
@@ -300,13 +303,13 @@ class RewardsCfg:
     """Reward terms for the MDP."""
 
     # -- task
-    track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
-    track_ang_vel_z = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=1.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
+    track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
+    track_ang_vel_z = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
     heading_error = RewTerm(func=mdp.heading_error, weight=-2.0,) # 如果target生成在后方，机器人会学会原地转弯利用vel的正向clamp来始终追踪小速度奖励
 
 
     # -- basic
-    alive = RewTerm(func=mdp.is_alive, weight=0.5)
+    alive = RewTerm(func=mdp.is_alive, weight=1.0)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)

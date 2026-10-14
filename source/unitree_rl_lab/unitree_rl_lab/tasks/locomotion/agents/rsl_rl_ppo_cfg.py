@@ -45,6 +45,9 @@ class RslRlPpoActorCriticGradCNNCfg(RslRlPpoActorCriticCfg):
     latent_dim: int = 32
     cnn_channels: list[int] = [32, 64, 128]
     reconstruction_loss_coef: float = 1.0
+    # beta-VAE KL weight. Keep this explicit in the runner config so it is
+    # visible and tunable instead of relying on the model constructor default.
+    vae_beta: float = 1.0e-3
 
 
 @configclass
@@ -180,6 +183,7 @@ class G1GradCNNRunnerCfg(BasePPORunnerCfg):
         latent_dim=32,
         cnn_channels=[32, 64, 128],
         reconstruction_loss_coef=1.0,
+        vae_beta=1.0e-3,
     )
 
 
