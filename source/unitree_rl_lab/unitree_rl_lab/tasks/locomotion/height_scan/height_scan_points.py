@@ -22,10 +22,10 @@ def ray_hits_in_base_frame(
 ) -> torch.Tensor:
     """Return yaw-frame scan points carrying Isaac Lab height values in Z.
 
-    This is the canonical preprocessing shared by the actor's raw height map
-    and the temporal height-difference map. XY is expressed relative to the
-    robot root using yaw only. Z follows Isaac Lab's official convention:
-    ``sensor_z - ray_hit_z - offset``.
+    This is the canonical preprocessing for the actor's raw height map. The
+    spatial edge map uses the same height convention. XY is expressed relative
+    to the robot root using yaw only. Z follows Isaac Lab's official
+    convention: ``sensor_z - ray_hit_z - offset``.
     """
 
     ray_hits_w = sensor.data.ray_hits_w

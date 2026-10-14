@@ -347,7 +347,7 @@ def main():
                 # <>
                 grad_cnn_map_visualizer = GradCNNMapVisualizer(
                     policy_nn,
-                    env_id=40,
+                    env_id=45,
                     num_envs=env.unwrapped.num_envs,
                 )
                 print("[INFO] GradCNN input and reconstruction maps enabled for env 0.", flush=True)

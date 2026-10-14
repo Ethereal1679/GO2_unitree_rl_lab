@@ -1,4 +1,4 @@
-"""Temporal height-scan differences expressed in the current yaw frame."""
+"""Temporal scan differences and single-frame spatial terrain edges."""
 
 from __future__ import annotations
 
@@ -228,7 +228,8 @@ class HeightScanGradient:
         return self._normalized_difference, self._valid_mask
 
 
-def height_scan_gradient(
+
+def height_scan_temporal_gradient(
     env: Any,
     sensor_cfg: Any,
     normalize_by_dt: bool = True,
@@ -260,6 +261,114 @@ def height_scan_gradient(
     reset_mask = getattr(env, "episode_length_buf", None)
     if reset_mask is not None:
         reset_mask = reset_mask == 0
-    # wtf
+    # 时间差分：将上一帧按空间位置对齐到当前帧，再比较对应位置的高度。
     gradient, valid_mask = calculator.update(sensor, dt=getattr(env, "step_dt", None), reset_mask=reset_mask)
     return torch.where(valid_mask, gradient * 10.0, torch.zeros_like(gradient)).reshape(gradient.shape[0], -1)
+
+
+
+def height_map_xy_differences(
+    height_map: torch.Tensor,
+    valid_mask: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute signed neighboring height differences within one frame.
+
+    ``height_map`` has shape ``(N, nx, ny)``: axis 1 increases along x and
+    axis 2 along y. Return ``(dx, dy)`` with the same shape. These are height
+    differences, not derivatives divided by grid spacing or elapsed time.
+    A difference is zero if either of its two samples is invalid.
+    """
+
+    if height_map.ndim != 3 or height_map.shape[1] < 1 or height_map.shape[2] < 1:
+        raise ValueError(f"Expected a height map shaped (N, nx, ny), got {tuple(height_map.shape)}.")
+    valid = torch.isfinite(height_map)
+    if valid_mask is not None:
+        if valid_mask.shape != height_map.shape:
+            raise ValueError("valid_mask must have the same shape as height_map.")
+        valid = valid & valid_mask.to(device=height_map.device, dtype=torch.bool)
+    # 先屏蔽无效高度；只有相邻两个点都有效时才计算差分，避免漏射点产生假边缘。
+    heights = torch.where(valid, height_map, torch.zeros_like(height_map))
+    dx = torch.zeros_like(heights)
+    dy = torch.zeros_like(heights)
+
+    # x 方向：dx[i, j] = h[i + 1, j] - h[i, j]。
+    # 最后一行使用向后差分；不把地图两端连起来，也不补零制造边界跳变。
+    if heights.shape[1] > 1:
+        x_pairs = valid[:, 1:, :] & valid[:, :-1, :]
+        x_difference = heights[:, 1:, :] - heights[:, :-1, :]
+        x_difference = torch.where(x_pairs, x_difference, torch.zeros_like(x_difference))
+        dx[:, :-1, :] = x_difference
+        dx[:, -1, :] = x_difference[:, -1, :]
+
+    # y 方向：dy[i, j] = h[i, j + 1] - h[i, j]；最后一列同样用向后差分。
+    # 某方向只有一个采样点时，没有相邻点，该方向的差分保持为零。
+    if heights.shape[2] > 1:
+        y_pairs = valid[:, :, 1:] & valid[:, :, :-1]
+        y_difference = heights[:, :, 1:] - heights[:, :, :-1]
+        y_difference = torch.where(y_pairs, y_difference, torch.zeros_like(y_difference))
+        dy[:, :, :-1] = y_difference
+        dy[:, :, -1] = y_difference[:, :, -1]
+
+    return dx, dy
+
+
+def height_scan_spacial_gradient(
+    env: Any,
+    sensor_cfg: Any,
+    grid_shape: tuple[int, int] = (17, 11),
+    component: str = "magnitude",
+    normalize: bool = True,
+    # scale: float = 10.0,
+) -> torch.Tensor:
+    """Return single-frame spatial height differences as a flat observation.
+
+    ``grid_shape`` is ``(nx, ny)`` for an Isaac Lab GridPattern RayCaster.
+    ``component`` selects ``"x"``, ``"y"`` or ``"magnitude"`` (the default
+    edge strength ``sqrt(dx**2 + dy**2)``). With normalization, all components
+    use the maximum edge strength per environment as a shared denominator.
+    The default magnitude output is in ``[0, 10]`` and has shape
+    ``(N, nx * ny)``. No previous scan, sensor pose or time step is needed.
+    """
+
+    if len(grid_shape) != 2 or any(size < 1 or int(size) != size for size in grid_shape):
+        raise ValueError(f"grid_shape must contain two positive integers, got {grid_shape}.")
+    if component not in ("x", "y", "magnitude"):
+        raise ValueError(f"component must be 'x', 'y' or 'magnitude', got {component!r}.")
+    sensor = env.scene.sensors[sensor_cfg.name]
+    hits_w = sensor.data.ray_hits_w.detach()
+    nx, ny = (int(size) for size in grid_shape)
+    if hits_w.ndim != 3 or hits_w.shape[1:] != (nx * ny, 3):
+        raise ValueError(f"Expected ray hits shaped (N, {nx * ny}, 3), got {tuple(hits_w.shape)}.")
+
+    pattern_cfg = getattr(getattr(sensor, "cfg", None), "pattern_cfg", None)
+    ordering = getattr(pattern_cfg, "ordering", "yx")
+    if ordering not in ("yx", "xy"):
+        raise ValueError(f"Expected grid ordering 'yx' or 'xy', got {ordering!r}.")
+    # 直接读取本帧命中点的世界高度 z，不使用前一帧，也不引入观测中的随机高度噪声。
+    # 减去同一个机器人高度或扫描 offset 不会改变相邻高度差，因此无需额外转换 z。
+    # Isaac Lab ordering='yx' 时，reshape(nx, ny) 的行对应 x，列对应 y。
+    raw_shape = (nx, ny) if ordering == "yx" else (ny, nx)
+    heights = hits_w[..., 2].reshape(hits_w.shape[0], *raw_shape)
+    valid = torch.isfinite(hits_w).all(dim=-1).reshape(hits_w.shape[0], *raw_shape)
+    if ordering == "xy":
+        heights = heights.transpose(1, 2)
+        valid = valid.transpose(1, 2)
+    dx, dy = height_map_xy_differences(heights, valid)
+
+    # 两个方向合成边缘强度：平地为 0，台阶/坑边缘较大，斜坡也会有响应。
+    magnitude = torch.hypot(dx, dy)
+    gradient = {"x": dx, "y": dy, "magnitude": magnitude}[component]
+    if normalize:
+        # 各环境独立归一化，不在不同机器人之间取最大值；全零地图仍然输出全零。
+        max_magnitude = magnitude.amax(dim=(1, 2), keepdim=True).clamp_min(1.0e-6)
+        gradient = gradient / max_magnitude
+    if ordering == "xy":
+        # 恢复传感器原来的展平顺序，确保与高程观测中的同一个射线索引对应。
+        gradient = gradient.transpose(1, 2)
+    return (gradient * 5.0).reshape(hits_w.shape[0], -1)
+
+
+# 兼容原来的时间差分名称，防止现有配置在导入时找不到函数。
+height_scan_gradient = height_scan_temporal_gradient
+# ``spacial`` 保留为现有配置使用的名称，同时提供正确拼写给新配置。
+height_scan_spatial_gradient = height_scan_spacial_gradient

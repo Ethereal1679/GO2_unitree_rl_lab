@@ -1,7 +1,7 @@
 """Actor-critic with a convolutional height-map variational autoencoder.
 
 The actor observation ends with a flattened two-channel map containing the
-current height scan and its temporal gradient. The gradient is computed by
+current height scan and its spatial edge map. The edge map is computed by
 the observation term before it reaches this module.
 """
 
@@ -269,7 +269,7 @@ class ActorCriticGradCNN(nn.Module):
         if vae_beta < 0.0:
             raise ValueError("vae_beta must be non-negative.")
         if map_channels != 2:
-            raise ValueError("ActorCriticGradCNN requires two map channels: height and temporal gradient.")
+            raise ValueError("ActorCriticGradCNN requires two map channels: height and spatial edge map.")
         self.obs_groups = obs_groups
         self.reconstruction_loss_coef = float(reconstruction_loss_coef)
         self.vae_beta = float(vae_beta)

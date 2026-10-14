@@ -242,7 +242,7 @@ class ObservationsCfg:
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, noise=Unoise(n_min=-1.5, n_max=1.5))
         last_action = ObsTerm(func=mdp.last_action)
         # gait_phase = ObsTerm(func=mdp.gait_phase, params={"period": 0.8})
-        # The gradient term aligns the previous scan and computes its temporal difference.
+        # CNN 的两个地图通道依次为当前高程图、本帧 x/y 差分合成的地形边缘强度。
         height_scanner = ObsTerm(
             func=mdp.height_scan_points,
             params={
@@ -255,8 +255,12 @@ class ObservationsCfg:
             clip=(-100.0, 100.0),
         )
         height_scan_gradient = ObsTerm(
-            func=mdp.height_scan_gradient,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner"),},
+            func=mdp.height_scan_spacial_gradient,
+            params={
+                "sensor_cfg": SceneEntityCfg("height_scanner"),
+                "grid_shape": (17, 11),
+                "component": "magnitude",
+            },
             clip=(-100.0, 100.0),
         )
         def __post_init__(self):

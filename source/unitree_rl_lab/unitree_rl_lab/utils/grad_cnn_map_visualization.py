@@ -28,6 +28,15 @@ _DIFFERENCE_STOPS = np.asarray(
     ],
     dtype=np.float32,
 )
+_EDGE_STOPS = np.asarray(
+    [
+        [0.035, 0.145, 0.360],
+        [0.110, 0.792, 0.847],
+        [0.976, 0.831, 0.137],
+        [0.843, 0.098, 0.110],
+    ],
+    dtype=np.float32,
+)
 
 
 def _piecewise_rgb(normalized: np.ndarray, stops: np.ndarray) -> np.ndarray:
@@ -41,10 +50,10 @@ def _piecewise_rgb(normalized: np.ndarray, stops: np.ndarray) -> np.ndarray:
     return stops[lower] * (1.0 - alpha) + stops[upper] * alpha
 
 
-def _colorbar_rgba(width: int, height: int, *, diverging: bool) -> np.ndarray:
+def _colorbar_rgba(width: int, height: int, *, diverging: bool, edge: bool = False) -> np.ndarray:
     """Create a horizontal legend strip using the same palette as the map."""
 
-    stops = _DIFFERENCE_STOPS if diverging else _HEIGHT_STOPS
+    stops = _EDGE_STOPS if edge else (_DIFFERENCE_STOPS if diverging else _HEIGHT_STOPS)
     values = np.linspace(0.0, 1.0, width, dtype=np.float32)
     colors = _piecewise_rgb(values, stops)
     rgb = np.repeat(colors[None, :, :], height, axis=0)
@@ -58,6 +67,7 @@ def scalar_map_to_rgba(
     value_max: float,
     *,
     diverging: bool = False,
+    edge: bool = False,
     pixel_size: int = 16,
 ) -> np.ndarray:
     """Convert a scalar grid into an enlarged RGBA pixel heatmap.
@@ -75,7 +85,7 @@ def scalar_map_to_rgba(
     span = max(float(value_max) - float(value_min), 1.0e-6)
     finite = np.isfinite(values)
     normalized = (np.nan_to_num(values, nan=value_min, posinf=value_max, neginf=value_min) - value_min) / span
-    palette = _DIFFERENCE_STOPS if diverging else _HEIGHT_STOPS
+    palette = _EDGE_STOPS if edge else (_DIFFERENCE_STOPS if diverging else _HEIGHT_STOPS)
     rgb = _piecewise_rgb(normalized, palette)
     rgb[~finite] = np.asarray([1.0, 0.0, 1.0], dtype=np.float32)
     rgba = np.concatenate(
@@ -111,7 +121,7 @@ class GradCNNMapVisualizer:
         env_id: int,
         num_envs: int,
         pixel_size: int = 16,
-        channel_names: tuple[str, str] = ("height", "normalized height difference"),
+        channel_names: tuple[str, str] = ("height", "normalized spatial edge"),
     ) -> None:
         if env_id < 0 or env_id >= num_envs:
             raise ValueError(f"env_id must be in [0, {num_envs - 1}], got {env_id}.")
@@ -145,8 +155,13 @@ class GradCNNMapVisualizer:
         initial[..., 3] = 255
         for provider in self._providers:
             provider.set_bytes_data(initial.flatten().data, [self.image_width, self.image_height])
-        for provider, diverging in zip(self._legend_providers, (False, True)):
-            legend = _colorbar_rgba(self._legend_width, self._legend_height, diverging=diverging)
+        for provider, (diverging, edge) in zip(self._legend_providers, ((False, False), (False, True))):
+            legend = _colorbar_rgba(
+                self._legend_width,
+                self._legend_height,
+                diverging=diverging,
+                edge=edge,
+            )
             provider.set_bytes_data(legend.flatten().data, [self._legend_width, self._legend_height])
 
         window_width = 2 * self.image_width + 54
@@ -172,7 +187,7 @@ class GradCNNMapVisualizer:
                     self._build_panel(3, f"Reconstructed {self.channel_names[1]}")
                 with ui.VStack(spacing=4):
                     self._build_legend(0, f"{self.channel_names[0]} (m)")
-                    self._build_legend(1, "Normalized difference (x10)")
+                    self._build_legend(1, "Normalized spatial edge (x10)")
 
     def _build_panel(self, index: int, title: str) -> None:
         ui = self._ui
@@ -236,20 +251,20 @@ class GradCNNMapVisualizer:
                 f"Expected map shape (2, {self.map_height}, {self.map_width}), got {original.shape}."
             )
 
-        raw_height, raw_difference = original
-        reconstructed_height, reconstructed_difference = reconstruction
+        raw_height, raw_edge = original
+        reconstructed_height, reconstructed_edge = reconstruction
         height_min, height_max = _finite_range(raw_height, reconstructed_height)
-        difference_limit = 10.0  # The observation scales the normalized difference by 10.
+        edge_limit = 10.0  # The spatial edge observation is normalized and scaled by 10.
 
         images = (
             scalar_map_to_rgba(raw_height, height_min, height_max, pixel_size=self.pixel_size),
-            scalar_map_to_rgba(raw_difference, -difference_limit, difference_limit, diverging=True, pixel_size=self.pixel_size),
+            scalar_map_to_rgba(raw_edge, 0.0, edge_limit, edge=True, pixel_size=self.pixel_size),
             scalar_map_to_rgba(reconstructed_height, height_min, height_max, pixel_size=self.pixel_size),
             scalar_map_to_rgba(
-                reconstructed_difference,
-                -difference_limit,
-                difference_limit,
-                diverging=True,
+                reconstructed_edge,
+                0.0,
+                edge_limit,
+                edge=True,
                 pixel_size=self.pixel_size,
             ),
         )
@@ -259,19 +274,19 @@ class GradCNNMapVisualizer:
             provider.set_bytes_data(image.flatten().data, [self.image_width, self.image_height])
 
         height_mse = float(np.mean((reconstructed_height - raw_height) ** 2))
-        difference_mse = float(np.mean((reconstructed_difference - raw_difference) ** 2))
+        edge_mse = float(np.mean((reconstructed_edge - raw_edge) ** 2))
         descriptions = (
             self._description(f"Original {self.channel_names[0]}", raw_height),
-            self._description(f"Original {self.channel_names[1]}", raw_difference),
+            self._description(f"Original {self.channel_names[1]}", raw_edge),
             self._description(f"Reconstructed {self.channel_names[0]}", reconstructed_height, height_mse),
-            self._description(f"Reconstructed {self.channel_names[1]}", reconstructed_difference, difference_mse),
+            self._description(f"Reconstructed {self.channel_names[1]}", reconstructed_edge, edge_mse),
         )
         for label, description in zip(self._labels, descriptions):
             label.text = description
 
         legend_values = (
             tuple(np.linspace(height_min, height_max, 5)),
-            tuple(np.linspace(-difference_limit, difference_limit, 5)),
+            tuple(np.linspace(0.0, edge_limit, 5)),
         )
         for labels, values in zip(self._legend_value_labels, legend_values):
             for label, value in zip(labels, values):
@@ -279,7 +294,7 @@ class GradCNNMapVisualizer:
 
         self._status_label.text = (
             f"Env {self.env_id} | height [{height_min:+.2f}, {height_max:+.2f}] m | "
-            f"normalized difference x10 [-{difference_limit:.0f}, +{difference_limit:.0f}]"
+            f"normalized spatial edge x10 [0, {edge_limit:.0f}]"
         )
         return True
 
