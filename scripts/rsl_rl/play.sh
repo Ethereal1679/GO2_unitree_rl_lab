@@ -21,7 +21,7 @@ export HEADLESS=0
 python "${SCRIPT_DIR}/py/play.py" \
     --task g1_lidar \
     --num_envs 64 \
-    --load_run 2026-10-14_00-25-00_g1_grad_VAE-remake-holes_depth:0.2-track_lin_vel_xy:2.5-track_ang_vel_z:2.0-alive:1.0 \
+    --load_run 2026-10-14_14-23-20_g1_grad_VAE-remake-holes_depth:0.2-track_lin_vel_xy:2.5-track_ang_vel_z:2.0-alive:1.0-train_spacial \
     --real-time \
     --grad_cnn_map_viz \
-    --height_scan_gradient_viz
+    # --height_scan_gradient_viz

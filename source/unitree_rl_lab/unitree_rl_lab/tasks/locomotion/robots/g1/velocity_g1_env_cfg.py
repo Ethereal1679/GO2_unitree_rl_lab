@@ -254,6 +254,11 @@ class ObservationsCfg:
             },
             clip=(-100.0, 100.0),
         )
+        # height_scan_gradient = ObsTerm(
+        #     func=mdp.height_scan_temporal_gradient,
+        #     params={"sensor_cfg": SceneEntityCfg("height_scanner"),},
+        #     clip=(-100.0, 100.0),
+        # )
         height_scan_gradient = ObsTerm(
             func=mdp.height_scan_spacial_gradient,
             params={
@@ -289,7 +294,7 @@ class ObservationsCfg:
                 "sensor_cfg": SceneEntityCfg("height_scanner"),
                 "asset_cfg": SceneEntityCfg("robot"),
                 "grid_shape": (17, 11),
-                "offset": 0.0, # 用不到
+                "offset": 0.0,
                 "noise": False,
             },
             clip=(-100.0, 100.0),
@@ -333,10 +338,10 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
     joint_position_penalty = RewTerm(func=mdp.joint_position_penalty, weight=-0.5, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*"),"stand_still_scale": 5.0,"velocity_threshold": 0.3,},)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts,weight=-1.0,params={"threshold": 1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["(?!.*ankle.*).*"]),},)
-    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-3.0,
+    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-5.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot_hook1"),
-            "min_depth": 0.0, "max_depth": 2.0, "depth_scale": 0.40, "duration_scale": 0.50,
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*"),
+            "min_depth": 0.02, "max_depth": 2.0, "depth_scale": 0.40, "duration_scale": 0.50,
             "sub_terrain_size": COMPLEX_RANDOM_CFG.size,
             "plane_z": -0.07, "plane_thickness": 0.02,
         },
@@ -434,3 +439,4 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.events.base_external_force_torque = None
         # self.terminations.base_contact = None
         self.terminations.time_out = None
+

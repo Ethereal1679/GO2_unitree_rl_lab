@@ -101,7 +101,7 @@ class HeightScanGradient:
         self,
         max_correspondence_distance: float = 0.2,
         num_neighbors: int = 4,
-        normalize_by_dt: bool = True,
+        # normalize_by_dt: bool = True,
     ):
         if max_correspondence_distance <= 0.0:
             raise ValueError("max_correspondence_distance must be positive.")
@@ -111,7 +111,7 @@ class HeightScanGradient:
         self.num_neighbors = int(num_neighbors)
         # Kept for compatibility with older configs; normalization is no
         # longer time-based and this flag is intentionally ignored.
-        del normalize_by_dt
+        # del normalize_by_dt
         self._previous_hits_w: torch.Tensor | None = None
         self._previous_timestamps: torch.Tensor | None = None
         self._has_history: torch.Tensor | None = None
@@ -232,7 +232,7 @@ class HeightScanGradient:
 def height_scan_temporal_gradient(
     env: Any,
     sensor_cfg: Any,
-    normalize_by_dt: bool = True,
+    # normalize_by_dt: bool = True,
     max_correspondence_distance: float = 0.2,
     num_neighbors: int = 4,
 ) -> torch.Tensor:
@@ -255,7 +255,7 @@ def height_scan_temporal_gradient(
         calculator = HeightScanGradient(
             max_correspondence_distance=max_correspondence_distance,
             num_neighbors=num_neighbors,
-            normalize_by_dt=normalize_by_dt,
+            # normalize_by_dt=normalize_by_dt,
         )
         state[key] = calculator
     reset_mask = getattr(env, "episode_length_buf", None)
@@ -263,7 +263,7 @@ def height_scan_temporal_gradient(
         reset_mask = reset_mask == 0
     # 时间差分：将上一帧按空间位置对齐到当前帧，再比较对应位置的高度。
     gradient, valid_mask = calculator.update(sensor, dt=getattr(env, "step_dt", None), reset_mask=reset_mask)
-    return torch.where(valid_mask, gradient * 10.0, torch.zeros_like(gradient)).reshape(gradient.shape[0], -1)
+    return torch.where(valid_mask, gradient, torch.zeros_like(gradient)).reshape(gradient.shape[0], -1)
 
 
 
@@ -365,7 +365,7 @@ def height_scan_spacial_gradient(
     if ordering == "xy":
         # 恢复传感器原来的展平顺序，确保与高程观测中的同一个射线索引对应。
         gradient = gradient.transpose(1, 2)
-    return (gradient * 5.0).reshape(hits_w.shape[0], -1)
+    return (gradient).reshape(hits_w.shape[0], -1)
 
 
 # 兼容原来的时间差分名称，防止现有配置在导入时找不到函数。

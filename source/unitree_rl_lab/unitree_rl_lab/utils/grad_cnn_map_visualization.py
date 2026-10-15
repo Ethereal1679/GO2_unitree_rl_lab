@@ -254,7 +254,7 @@ class GradCNNMapVisualizer:
         raw_height, raw_edge = original
         reconstructed_height, reconstructed_edge = reconstruction
         height_min, height_max = _finite_range(raw_height, reconstructed_height)
-        edge_limit = 10.0  # The spatial edge observation is normalized and scaled by 10.
+        edge_limit = 1.0
 
         images = (
             scalar_map_to_rgba(raw_height, height_min, height_max, pixel_size=self.pixel_size),

@@ -142,8 +142,7 @@ class HfConcentricGapTerrainCfg(HfTerrainBaseCfg):
 
 
 
-@height_field_to_mesh
-def stepping_stones_terrain(difficulty: float, cfg: HfSteppingStonesTerrainCfg) -> np.ndarray:
+def stepping_stones_terrain(difficulty: float, cfg: HfTerrainBaseCfg) -> np.ndarray:
     """Generate a terrain with a stepping stones pattern.
 
     The terrain is a stepping stones pattern which trims to a flat platform at the center of the terrain.
@@ -179,6 +178,14 @@ def stepping_stones_terrain(difficulty: float, cfg: HfSteppingStonesTerrainCfg) 
     holes_depth = int(round(_resolve_depth(cfg.holes_depth, difficulty) / cfg.vertical_scale))
     # -- platform
     platform_width = int(cfg.platform_width / cfg.horizontal_scale)
+    if stone_width < 1:
+        raise ValueError("stone_width_range must produce at least one grid cell")
+    if stone_distance < 0:
+        raise ValueError("stone_distance_range must be non-negative")
+    if stone_height_max < 0:
+        raise ValueError("stone_height_max must be non-negative")
+    if platform_width < 1:
+        raise ValueError("platform_width must be at least one grid cell")
     # create range of heights
     stone_height_range = np.arange(-stone_height_max - 1, stone_height_max, step=1)
 
@@ -230,11 +237,176 @@ def stepping_stones_terrain(difficulty: float, cfg: HfSteppingStonesTerrainCfg) 
 
 
 
+
+def _append_box(
+    meshes: list[trimesh.Trimesh],
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    bottom_z: float,
+    top_z: float,
+) -> None:
+    """Append one non-degenerate axis-aligned box to ``meshes``."""
+
+    if x1 <= x0 or y1 <= y0 or top_z <= bottom_z:
+        return
+    meshes.append(
+        trimesh.creation.box(
+            extents=(x1 - x0, y1 - y0, top_z - bottom_z),
+            transform=trimesh.transformations.translation_matrix(
+                ((x0 + x1) * 0.5, (y0 + y1) * 0.5, (bottom_z + top_z) * 0.5)
+            ),
+        )
+    )
+
+
+def _append_mask_rectangles(
+    meshes: list[trimesh.Trimesh],
+    mask: np.ndarray,
+    horizontal_scale: float,
+    x_offset: float,
+    y_offset: float,
+    bottom_z: float,
+    top_z: float,
+) -> None:
+    """Convert only ``True`` cells into maximal, non-overlapping boxes."""
+
+    used = np.zeros(mask.shape, dtype=bool)
+    width, length = mask.shape
+    for x in range(width):
+        y = 0
+        while y < length:
+            if not mask[x, y] or used[x, y]:
+                y += 1
+                continue
+
+            y_end = y + 1
+            while y_end < length and mask[x, y_end] and not used[x, y_end]:
+                y_end += 1
+            x_end = x + 1
+            while x_end < width:
+                row = mask[x_end, y:y_end]
+                if not np.all(row) or np.any(used[x_end, y:y_end]):
+                    break
+                x_end += 1
+
+            used[x:x_end, y:y_end] = True
+            _append_box(
+                meshes,
+                x_offset + x * horizontal_scale,
+                x_offset + x_end * horizontal_scale,
+                y_offset + y * horizontal_scale,
+                y_offset + y_end * horizontal_scale,
+                bottom_z,
+                top_z,
+            )
+            y = y_end
+
+
+def stepping_stones_clean_terrain(difficulty, cfg):
+    """Generate independent stepping-stone boxes without height-field triangles.
+
+    The random stone layout still comes from :func:`stepping_stones_terrain`.
+    Unlike the old implementation, the floor is created only in hole cells,
+    ``border_width`` is honored, and stone bases meet the floor exactly without
+    overlapping it.
+    """
+
+    hs = float(cfg.horizontal_scale)
+    vs = float(cfg.vertical_scale)
+    size_x, size_y = (float(cfg.size[0]), float(cfg.size[1]))
+    border = float(cfg.border_width)
+    if hs <= 0.0 or vs <= 0.0:
+        raise ValueError("horizontal_scale and vertical_scale must be positive")
+    if border < 0.0 or 2.0 * border >= min(size_x, size_y):
+        raise ValueError("border_width must leave a positive interior")
+
+    # Use whole cells inside the configured tile. The remainder is split
+    # equally between both sides, so ``border_width`` affects the actual
+    # geometry and the final mesh remains exactly ``cfg.size`` wide.
+    nx = int((size_x - 2.0 * border) / hs)
+    ny = int((size_y - 2.0 * border) / hs)
+    if nx < 1 or ny < 1:
+        raise ValueError("terrain size and border_width leave no stepping-stone cells")
+    interior_x = nx * hs
+    interior_y = ny * hs
+    x_offset = 0.5 * (size_x - interior_x)
+    y_offset = 0.5 * (size_y - interior_y)
+
+    cfg_for_layout = cfg.copy() if hasattr(cfg, "copy") else cfg
+    original_size = cfg_for_layout.size
+    cfg_for_layout.size = (interior_x, interior_y)
+    try:
+        hf = stepping_stones_terrain(difficulty, cfg_for_layout)
+    finally:
+        cfg_for_layout.size = original_size
+
+    floor_raw = int(round(_resolve_depth(cfg.holes_depth, difficulty) / vs))
+    floor_z = floor_raw * vs
+    if floor_raw >= 0:
+        raise ValueError("holes_depth must be negative")
+    if np.any(hf < floor_raw):
+        raise ValueError("holes_depth must be below every stepping-stone top")
+
+    meshes: list[trimesh.Trimesh] = []
+    floor_bottom = floor_z - max(0.05, hs)
+    hole_mask = hf == floor_raw
+    _append_mask_rectangles(meshes, hole_mask, hs, x_offset, y_offset, floor_bottom, floor_z)
+
+    # Keep the center platform as its own box. Otherwise a randomly sampled
+    # stone with the same height (usually 0) could be merged into the platform.
+    platform_cells = max(1, int(round(float(cfg.platform_width) / hs)))
+    platform_x0 = max(0, (nx - platform_cells) // 2)
+    platform_y0 = max(0, (ny - platform_cells) // 2)
+    platform_x1 = min(nx, platform_x0 + platform_cells)
+    platform_y1 = min(ny, platform_y0 + platform_cells)
+    platform_mask = np.zeros_like(hole_mask)
+    platform_mask[platform_x0:platform_x1, platform_y0:platform_y1] = True
+    _append_box(
+        meshes,
+        x_offset + platform_x0 * hs,
+        x_offset + platform_x1 * hs,
+        y_offset + platform_y0 * hs,
+        y_offset + platform_y1 * hs,
+        floor_z,
+        0.0,
+    )
+
+    stone_mask = ~hole_mask & ~platform_mask
+    for height_value in np.unique(hf[stone_mask]):
+        _append_mask_rectangles(
+            meshes,
+            stone_mask & (hf == height_value),
+            hs,
+            x_offset,
+            y_offset,
+            floor_z,
+            float(height_value) * vs,
+        )
+
+    # Preserve the height-field border convention: top of the border is z=0.
+    if x_offset > 0.0:
+        _append_box(meshes, 0.0, x_offset, 0.0, size_y, floor_bottom, 0.0)
+        _append_box(meshes, x_offset + interior_x, size_x, 0.0, size_y, floor_bottom, 0.0)
+    if y_offset > 0.0:
+        _append_box(meshes, x_offset, x_offset + interior_x, 0.0, y_offset, floor_bottom, 0.0)
+        _append_box(meshes, x_offset, x_offset + interior_x, y_offset + interior_y, size_y, floor_bottom, 0.0)
+
+    return meshes, np.array([size_x * 0.5, size_y * 0.5, 0.0], dtype=np.float64)
+
+
+
 @configclass
 class HfSteppingStonesTerrainCfg(HfTerrainBaseCfg):
-    """Configuration for a stepping stones height field terrain."""
+    """Configuration for the box-mesh stepping-stones terrain.
 
-    function = stepping_stones_terrain
+    The class keeps the ``HfTerrainBaseCfg`` name for compatibility with the
+    existing terrain configuration, but its ``function`` returns independent
+    box meshes and does not use height-field triangulation.
+    """
+
+    function = stepping_stones_clean_terrain
 
     stone_height_max: float = MISSING
     """The maximum height of the stones (in m)."""
