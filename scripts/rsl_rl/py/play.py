@@ -67,7 +67,7 @@ parser.add_argument(
     "--gap_gas_enable_viz",
     action="store_true",
     default=False,
-    help="Show non-colliding green gap volumes in play mode.",
+    help="Show the current non-colliding gap-penetration boxes in play mode.",
 )
 parser.add_argument(
     "--grad_cnn_map_viz",
@@ -160,6 +160,15 @@ def main():
     agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
     if args_cli.attention_weights:
         print("[WARNING] --attention_weights is deprecated; use --attention_enable_viz.")
+    if args_cli.gap_gas_enable_viz:
+        gap_term = getattr(getattr(env_cfg, "rewards", None), "gap_penetration", None)
+        if getattr(getattr(gap_term, "func", None), "__name__", "") == "GapPenetrationBoxPenalty":
+            gap_term.params["debug_vis"] = True
+        else:
+            print(
+                "[WARNING] --gap_gas_enable_viz requires GapPenetrationBoxPenalty; "
+                "dynamic box visualization disabled."
+            )
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -218,29 +227,6 @@ def main():
                 height_gradient_visualizer = None
             else:
                 print("[INFO] GradCNN normalized height-difference visualization requested.")
-
-    gap_gas_visualizer = None
-    if args_cli.gap_gas_enable_viz:
-        from unitree_rl_lab.tasks.locomotion.terrains.penalty_gap_gas import (
-            GapGasVisualizer,
-        )
-
-        gap_gas_visualizer = GapGasVisualizer(enabled=True)
-        terrain_cfg = env_cfg.scene.terrain.terrain_generator
-        terrain = env.unwrapped.scene.terrain
-        terrain_origins = terrain.terrain_origins if terrain is not None else None
-        if terrain_origins is None:
-            print("[INFO] Gap-gas visualization skipped: no generated sub-terrain origins.")
-        else:
-            gap_term = getattr(getattr(env_cfg, "rewards", None), "gap_penetration", None)
-            gap_params = getattr(gap_term, "params", {}) or {}
-            terrain_origins = terrain_origins.reshape(-1, 3)
-            gap_gas_visualizer.visualize_terrain_planes(
-                terrain_origins,
-                sub_terrain_size=tuple(gap_params.get("sub_terrain_size", terrain_cfg.size)),
-                plane_z=float(gap_params.get("plane_z", 0.0)),
-                thickness=float(gap_params.get("plane_thickness", 0.02)),
-            )
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model

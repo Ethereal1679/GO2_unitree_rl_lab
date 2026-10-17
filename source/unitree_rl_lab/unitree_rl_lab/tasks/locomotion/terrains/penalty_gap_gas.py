@@ -458,7 +458,108 @@ def ray_gap_gas_boxes(
     return GapGasBoxes(centers.numpy().astype(np.float32), sizes.numpy().astype(np.float32))
 
 
-class GapPenetrationPenalty(ManagerTermBase):
+def _gap_penetration_support(body: torch.Tensor, hits: torch.Tensor, support_radius: float) -> torch.Tensor:
+    valid = torch.isfinite(hits).all(dim=-1)
+    distance_sq = (body[:, :, None, :2] - hits[:, None, :, :2]).square().sum(dim=-1)
+    nearby = valid[:, None] & (distance_sq <= support_radius**2)
+    support = torch.where(
+        nearby,
+        hits[:, None, :, 2],
+        torch.full_like(hits[:, None, :, 2], -torch.inf),
+    ).amax(-1)
+    return torch.where(nearby.any(-1), support, body[..., 2])
+
+
+def gap_penetration_box_depth(
+    body: torch.Tensor,
+    hits: torch.Tensor,
+    support_radius: float = 0.35,
+    min_depth: float = 0.05,
+    max_depth: float = 2.5,
+) -> torch.Tensor:
+    """Return penetration depth for each body point and environment."""
+    support = _gap_penetration_support(body, hits, support_radius)
+    return (support - body[..., 2] - min_depth).clamp(0.0, max_depth)
+
+
+def gap_penetration_boxes(
+    body: torch.Tensor,
+    depth: torch.Tensor,
+    support_radius: float = 0.35,
+    min_depth: float = 0.05,
+) -> GapGasBoxes:
+    """Build display-only boxes for body points currently inside a gap."""
+    env_ids, body_ids = torch.nonzero(depth > 0.0, as_tuple=True)
+    if env_ids.numel() == 0:
+        return _empty_boxes()
+    selected = body[env_ids, body_ids].clone()
+    selected_depth = depth[env_ids, body_ids]
+    selected[:, 2] += min_depth + 0.5 * selected_depth
+    sizes = torch.full_like(selected, 2.0 * float(support_radius))
+    sizes[:, 2] = selected_depth
+    return GapGasBoxes(
+        selected.detach().cpu().numpy().astype(np.float32),
+        sizes.detach().cpu().numpy().astype(np.float32),
+    )
+
+
+class GapPenetrationBoxPenalty(ManagerTermBase):
+    """Penalize body parts that enter a scanned gap for a sustained duration."""
+
+    def __init__(self, cfg, env):
+        super().__init__(cfg, env)
+        self.inside_time = torch.zeros(env.num_envs, device=env.device)
+        self._gap_visualizer = None
+
+    def reset(self, env_ids=None):
+        if env_ids is None:
+            self.inside_time.zero_()
+        else:
+            self.inside_time[env_ids] = 0.0
+
+    def __call__(
+        self,
+        env,
+        sensor_cfg,
+        asset_cfg,
+        support_radius: float = 0.35,
+        min_depth: float = 0.05,
+        depth_scale: float = 1.0,
+        duration_scale: float = 0.5,
+        max_depth: float = 2.5,
+        debug_vis: bool = False,
+    ) -> torch.Tensor:
+        asset = env.scene[asset_cfg.name]
+        body = asset.data.body_com_pos_w[:, asset_cfg.body_ids]
+        hits = env.scene.sensors[sensor_cfg.name].data.ray_hits_w
+        body_depth = gap_penetration_box_depth(body, hits, support_radius, min_depth, max_depth)
+        depth = body_depth.amax(1)
+        if debug_vis:
+            if self._gap_visualizer is None:
+                self._gap_visualizer = GapGasVisualizer(
+                    enabled=True,
+                    prim_path="/Visuals/GapPenetrationBoxes",
+                    opacity=0.3,
+                )
+            boxes = gap_penetration_boxes(body, body_depth, support_radius, min_depth)
+            if boxes.centers.shape[0]:
+                if not self._gap_visualizer.enabled:
+                    self._gap_visualizer.set_enabled(True)
+                self._gap_visualizer.visualize(boxes)
+            elif self._gap_visualizer.enabled:
+                self._gap_visualizer.set_enabled(False)
+        inside = depth > 0.0
+        self.inside_time = torch.where(inside, self.inside_time + env.step_dt, torch.zeros_like(self.inside_time))
+        depth_factor = (depth / max(depth_scale, 1.0e-6)).clamp(0.0, 1.0)
+        duration_factor = (self.inside_time / max(duration_scale, 1.0e-6)).clamp(0.0, 1.0)
+        return depth_factor * duration_factor
+
+# Use fixed-plane depth to compute a reward term.
+# The reward is proportional to the depth and time spent below the penalty threshold.
+# The reward is normalized to [0, 1] by the maximum depth and duration scales.
+
+
+class GapPenetrationPlanePenalty(ManagerTermBase):
     """Penalize body parts below a fixed plane covering their terrain tile."""
 
     def __init__(self, cfg, env):

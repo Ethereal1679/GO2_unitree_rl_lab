@@ -34,9 +34,9 @@ python "${SCRIPT_DIR}/py/train.py" \
     --task g1_lidar \
     --logger tensorboard \
     --num_envs 2048 \
-    --run_name "g1_grad_VAE-spatial_grad-reward_gas_penalty:-10.0-lin_hook0-pillar_box" \
+    --run_name "add_stair-alive:3.0" \
     --max_iterations 99999999 \
     --headless \
     --resume \
-    --load_run 2026-10-16_05-12-15_g1_grad_VAE-spatial_grad-reward_gas_penalty:-10.0-lin_hook0-pillar_box \
+    --load_run 2026-10-17_18-51-44_add_stair \
 

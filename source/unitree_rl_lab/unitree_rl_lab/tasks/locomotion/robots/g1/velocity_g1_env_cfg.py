@@ -183,16 +183,16 @@ class CommandsCfg:
         # 随机clamp速度上限，不代表真实速度
         # NOTE 这里都是速度上限随机化，不存在负数
         velocity_ranges={
-            # "pyramid_stairs": {
-            #     "lin_vel_x": (0.45, 1.0),
-            #     "lin_vel_y": (0.0, 0.0),
-            #     "ang_vel_z": (-1.0, 1.0),
-            # },
-            # "pyramid_stairs_inv": {
-            #     "lin_vel_x": (0.45, 1.0),
-            #     "lin_vel_y": (0.0, 0.0),
-            #     "ang_vel_z": (-1.0, 1.0),
-            # },
+            "pyramid_stairs": {
+                "lin_vel_x": (0.45, 1.0),
+                "lin_vel_y": (0.0, 0.0),
+                "ang_vel_z": (-1.0, 1.0),
+            },
+            "pyramid_stairs_inv": {
+                "lin_vel_x": (0.45, 1.0),
+                "lin_vel_y": (0.0, 0.0),
+                "ang_vel_z": (-1.0, 1.0),
+            },
             "hf_gaps": {
                 "lin_vel_x": (0.45, 1.0),
                 "lin_vel_y": (0.0, 0.0),
@@ -318,7 +318,7 @@ class RewardsCfg:
 
 
     # -- basic
-    alive = RewTerm(func=mdp.is_alive, weight=1.0)
+    alive = RewTerm(func=mdp.is_alive, weight=3.0)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
@@ -338,15 +338,6 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
     joint_position_penalty = RewTerm(func=mdp.joint_position_penalty, weight=-0.5, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*"),"stand_still_scale": 5.0,"velocity_threshold": 0.3,},)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts,weight=-1.0,params={"threshold": 1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["(?!.*ankle.*).*"]),},)
-    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-10.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot_hook0"),
-            "min_depth": 0.02, "max_depth": 2.0, 
-            "depth_scale": 0.5, "duration_scale": 0.5,
-            "sub_terrain_size": COMPLEX_RANDOM_CFG.size,
-            "plane_z": -0.07, "plane_thickness": 0.02,
-        },
-    )
 
     # -- feet
     feet_air_time = RewTerm(func=mdp.feet_air_time,weight=0.1, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_roll.*"),"command_name": "base_velocity","threshold": 0.5,},)
@@ -359,8 +350,25 @@ class RewardsCfg:
     joint_deviation_waists = RewTerm(func=mdp.joint_deviation_l1, weight=-1.0,params={"asset_cfg": SceneEntityCfg("robot",joint_names=["waist.*",],)},)
     joint_deviation_legs = RewTerm(func=mdp.joint_deviation_l1, weight=-1.0,params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_roll_joint", ".*_hip_yaw_joint"])},)
 
-
-
+    # -- gas gap
+    gap_penetration = RewTerm(func=mdp.GapPenetrationPlanePenalty, weight=-5.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*(foot_hook0|foot_hook1|foot_hook2)"),
+            "min_depth": 0.00, "max_depth": 2.0, 
+            "depth_scale": 0.5, "duration_scale": 0.5,
+            "sub_terrain_size": COMPLEX_RANDOM_CFG.size,
+            "plane_z": -0.07, "plane_thickness": 0.02,
+        },
+    )
+    # gap_penetration = RewTerm(func=mdp.GapPenetrationBoxPenalty, weight=-5.0,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("height_scanner"),
+    #         "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot_hook0"),
+    #         "support_radius": 0.35,
+    #         "min_depth": 0.05, "max_depth": 2.0,
+    #         "depth_scale": 0.40, "duration_scale": 0.50,
+    #     },
+    # )
 
 
 

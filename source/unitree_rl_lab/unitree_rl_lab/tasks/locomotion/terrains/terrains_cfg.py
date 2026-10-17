@@ -28,7 +28,7 @@ from unitree_rl_lab.tasks.locomotion.terrains.terrains import (
 )
 
 # goal patch位置
-def _cardinal_target_patches() -> dict[str, FlatPatchSamplingCfg]:
+def _cardinal_target_patches(z_range: tuple[float, float] = (-0.1, 0.1)) -> dict[str, FlatPatchSamplingCfg]:
     """Sample targets on the flat midpoint of each terrain border."""
     ranges = {
         # The center platform is 2 m wide; keep a 0.2 m margin for patch radius.
@@ -44,7 +44,7 @@ def _cardinal_target_patches() -> dict[str, FlatPatchSamplingCfg]:
             patch_radius=0.1,
             x_range=x_range,
             y_range=y_range,
-            z_range=(-0.1, 0.1),
+            z_range=z_range,
             max_height_diff=0.02,
         )
         for name, (x_range, y_range) in ranges.items()
@@ -78,22 +78,24 @@ COMPLEX_RANDOM_CFG = terrain_gen.TerrainGeneratorCfg(
         # "hf_pyramid_slope_inv": terrain_gen.HfInvertedPyramidSlopedTerrainCfg(
         #     proportion=0.1, slope_range=(0.0, 0.4), platform_width=2.0, border_width=0.5
         # ),
-        # "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
-        #     proportion=0.2,
-        #     step_height_range=(0.1, 0.25),
-        #     step_width=0.3,
-        #     platform_width=3.0,
-        #     border_width=1.0,
-        #     holes=False,
-        # ),
-        # "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
-        #     proportion=0.2,
-        #     step_height_range=(0.1, 0.25),
-        #     step_width=0.3,
-        #     platform_width=3.0,
-        #     border_width=1.0,
-        #     holes=False,
-        # ),
+        "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
+            proportion=0.2,
+            step_height_range=(0.05, 0.25),
+            step_width=0.3,
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+            flat_patch_sampling=_cardinal_target_patches(z_range=(-2.0, 2.0)),
+        ),
+        "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.2,
+            step_height_range=(0.05, 0.25),
+            step_width=0.3,
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+            flat_patch_sampling=_cardinal_target_patches(z_range=(-2.0, 2.0)),
+        ),
         "hf_gaps": HfConcentricGapTerrainCfg(
             proportion=0.2, gap_width_range=(0.1, 0.3), platform_width=2.0,
             gap_depth=(-0.2, -2.0), border_width=1.0,
