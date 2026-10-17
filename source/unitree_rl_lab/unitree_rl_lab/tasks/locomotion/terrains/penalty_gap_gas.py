@@ -470,6 +470,31 @@ def _gap_penetration_support(body: torch.Tensor, hits: torch.Tensor, support_rad
     return torch.where(nearby.any(-1), support, body[..., 2])
 
 
+def _terrain_choice_mask(terrain: Any, terrain_choice: tuple[str, ...]) -> torch.Tensor:
+    """Map selected curriculum sub-terrain names to the environments using them."""
+    generator_cfg = getattr(terrain.cfg, "terrain_generator", None)
+    terrain_types = getattr(terrain, "terrain_types", None)
+    if generator_cfg is None or terrain_types is None:
+        raise ValueError("terrain_choice requires a generated terrain with terrain_types.")
+    if not generator_cfg.curriculum:
+        raise ValueError("terrain_choice requires curriculum terrain generation to map columns to sub-terrain names.")
+
+    names = list(generator_cfg.sub_terrains)
+    unknown = set(terrain_choice) - set(names)
+    if unknown:
+        raise ValueError(f"Unknown terrain_choice name(s): {sorted(unknown)}. Available: {names}")
+
+    proportions = np.asarray([cfg.proportion for cfg in generator_cfg.sub_terrains.values()], dtype=np.float64)
+    proportions /= proportions.sum()
+    # Match TerrainGenerator's proportion-based sub-terrain assignment for each column.
+    column_types = np.searchsorted(
+        np.cumsum(proportions), np.arange(generator_cfg.num_cols) / generator_cfg.num_cols + 0.001, side="right"
+    )
+    selected_types = [index for index, name in enumerate(names) if name in terrain_choice]
+    selected_columns = torch.as_tensor(np.isin(column_types, selected_types), device=terrain_types.device)
+    return selected_columns[terrain_types]
+
+
 def gap_penetration_box_depth(
     body: torch.Tensor,
     hits: torch.Tensor,
@@ -565,6 +590,8 @@ class GapPenetrationPlanePenalty(ManagerTermBase):
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
         self.inside_time = torch.zeros(env.num_envs, device=env.device)
+        self._gap_visualizer = None
+        self._terrain_choice_masks: dict[tuple[str, ...], torch.Tensor] = {}
 
     def reset(self, env_ids=None):
         if env_ids is None:
@@ -586,6 +613,8 @@ class GapPenetrationPlanePenalty(ManagerTermBase):
         support_radius: float = 0.35,
         sensor_cfg=None,
         terrain_size: tuple[float, float] | None = None,
+        debug_vis: bool = False,
+        terrain_choice: tuple[str, ...] | list[str] | None = None,
     ) -> torch.Tensor:
         asset = env.scene[asset_cfg.name]
         # Use each link's center of mass as the representative body point.
@@ -611,13 +640,47 @@ class GapPenetrationPlanePenalty(ManagerTermBase):
         plane_sizes[:, 0] = float(sub_terrain_size[0])
         plane_sizes[:, 1] = float(sub_terrain_size[1])
         plane_sizes[:, 2] = float(plane_thickness)
-        depth = terrain_penalty_plane_depth(
-            body,
-            plane_centers,
-            plane_sizes,
-            min_depth=min_depth,
-            max_depth=max_depth,
-        ).amax(1)
+
+        selected_envs = None
+        if terrain_choice is not None:
+            choice_key = tuple(sorted(set(terrain_choice)))
+            if choice_key not in self._terrain_choice_masks:
+                self._terrain_choice_masks[choice_key] = _terrain_choice_mask(terrain, choice_key)
+            selected_envs = self._terrain_choice_masks[choice_key]
+
+        if debug_vis:
+            if self._gap_visualizer is None:
+                self._gap_visualizer = GapGasVisualizer(
+                    enabled=True,
+                    prim_path="/Visuals/GapGasPlanes",
+                    opacity=0.22,
+                )
+            plane_origins = env.scene.env_origins if selected_envs is None else env.scene.env_origins[selected_envs]
+            self._gap_visualizer.visualize_terrain_planes(
+                plane_origins,
+                sub_terrain_size=sub_terrain_size,
+                plane_z=plane_z,
+                thickness=plane_thickness,
+            )
+        if selected_envs is None:
+            depth = terrain_penalty_plane_depth(
+                body,
+                plane_centers,
+                plane_sizes,
+                min_depth=min_depth,
+                max_depth=max_depth,
+            ).amax(1)
+        else:
+            selected_ids = torch.nonzero(selected_envs, as_tuple=True)[0]
+            depth = torch.zeros(body.shape[0], device=body.device, dtype=body.dtype)
+            if selected_ids.numel() > 0:
+                depth[selected_ids] = terrain_penalty_plane_depth(
+                    body[selected_ids],
+                    plane_centers[selected_ids],
+                    plane_sizes[selected_ids],
+                    min_depth=min_depth,
+                    max_depth=max_depth,
+                ).amax(1)
         inside = depth > 0.0
 
         # -- accumulate time spent below the fixed penalty plane

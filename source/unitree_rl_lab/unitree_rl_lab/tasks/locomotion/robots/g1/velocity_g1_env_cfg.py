@@ -358,6 +358,7 @@ class RewardsCfg:
             "depth_scale": 0.5, "duration_scale": 0.5,
             "sub_terrain_size": COMPLEX_RANDOM_CFG.size,
             "plane_z": -0.07, "plane_thickness": 0.02,
+            "terrain_choice": ["hf_gaps", "hf_steppingstones", "hf_i_bridge"], # 使用的地形类型
         },
     )
     # gap_penetration = RewTerm(func=mdp.GapPenetrationBoxPenalty, weight=-5.0,

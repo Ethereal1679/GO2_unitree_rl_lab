@@ -160,15 +160,17 @@ def main():
     agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
     if args_cli.attention_weights:
         print("[WARNING] --attention_weights is deprecated; use --attention_enable_viz.")
+
+    # <> gap gas visualization <>
     if args_cli.gap_gas_enable_viz:
         gap_term = getattr(getattr(env_cfg, "rewards", None), "gap_penetration", None)
-        if getattr(getattr(gap_term, "func", None), "__name__", "") == "GapPenetrationBoxPenalty":
-            gap_term.params["debug_vis"] = True
-        else:
-            print(
-                "[WARNING] --gap_gas_enable_viz requires GapPenetrationBoxPenalty; "
-                "dynamic box visualization disabled."
-            )
+        # if getattr(getattr(gap_term, "func", None), "__name__", "") == "GapPenetrationPlanePenalty":
+        gap_term.params["debug_vis"] = True
+        # else:
+        #     print(
+        #         "[WARNING] --gap_gas_enable_viz requires GapPenetrationBoxPenalty; "
+        #         "dynamic box visualization disabled."
+        #     )
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
