@@ -66,12 +66,16 @@ class PoseVelocityCommand(CommandTerm):
         self.random_lin_vel_y_range = torch.zeros(self.num_envs, 2, device=self.device)
         self.random_ang_vel_z_range = torch.zeros(self.num_envs, 2, device=self.device)
         self.random_velocity_indices = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        terrain_generator_cfg = self.terrain.cfg.terrain_generator
+        self.random_velocity_terrain_types = torch.zeros(
+            terrain_generator_cfg.num_cols, dtype=torch.bool, device=self.device
+        )
 
         self.random_lin_vel_x = torch.zeros(self.num_envs, device=self.device)
         self.random_lin_vel_y = torch.zeros(self.num_envs, device=self.device)
         self.random_ang_vel_z = torch.zeros(self.num_envs, device=self.device)
 
-        if self.cfg.velocity_ranges is not None:
+        if self.cfg.velocity_ranges is not None or self.cfg.random_velocity_terrain:
             terrain_generator_cfg = self.terrain.cfg.terrain_generator
             proportions = np.array([sub_cfg.proportion for sub_cfg in terrain_generator_cfg.sub_terrains.values()])
             proportions /= np.sum(proportions)
@@ -84,7 +88,7 @@ class PoseVelocityCommand(CommandTerm):
                 sub_indices.append(sub_index)
             sub_indices = np.array(sub_indices, dtype=np.int32)
             sub_terrains_names = list(terrain_generator_cfg.sub_terrains.keys())
-            for key, value in self.cfg.velocity_ranges.items():
+            for key, value in (self.cfg.velocity_ranges or {}).items():
                 if key in sub_terrains_names:
                     terrain_type_index = sub_terrains_names.index(key)
                     type_indices = np.where(sub_indices == terrain_type_index)[0]
@@ -103,6 +107,9 @@ class PoseVelocityCommand(CommandTerm):
                 for key in self.cfg.random_velocity_terrain:
                     terrain_type_index = sub_terrains_names.index(key)
                     type_indices = np.where(sub_indices == terrain_type_index)[0]
+                    self.random_velocity_terrain_types[
+                        torch.as_tensor(type_indices, dtype=torch.long, device=self.device)
+                    ] = True
                     for type_indice in type_indices:
                         env_indices = torch.where(self.terrain.terrain_types == type_indice)[0]
                         self.random_velocity_indices[env_indices] = True
@@ -127,6 +134,8 @@ class PoseVelocityCommand(CommandTerm):
         self.valid_targets: torch.Tensor = torch.cat(
             [self.terrain.flat_patches[name] for name in self.cfg.target_patch_names], dim=2
         )
+        self.patch_terrain_types = ~self.random_velocity_terrain_types
+        self.patch_env_ids = (~self.random_velocity_indices).nonzero(as_tuple=False).flatten()
 
     def __str__(self) -> str:
         msg = "PositionCommand:\n"
@@ -180,51 +189,44 @@ class PoseVelocityCommand(CommandTerm):
         if env_ids.numel() == 0:
             return
 
-        # Obtain every valid target for the terrain occupied by each environment.
-        candidate_targets = self.valid_targets[
-            self.terrain.terrain_levels[env_ids], self.terrain.terrain_types[env_ids]
-        ]
+        random_env_ids = env_ids[self.random_velocity_indices[env_ids]]
+        patch_env_ids = env_ids[~self.random_velocity_indices[env_ids]]
+        self.pos_command_w[random_env_ids] = self.robot.data.root_pos_w[random_env_ids]
+        if patch_env_ids.numel() > 0:
+            candidate_targets = self.valid_targets[
+                self.terrain.terrain_levels[patch_env_ids], self.terrain.terrain_types[patch_env_ids]
+            ]
 
-        if self.cfg.prefer_forward_targets:
-            # Prefer sufficiently distant targets inside a cone centered on the
-            # robot's current forward direction. If the robot is already at the
-            # forward border and no distant patch lies in that cone, sample from
-            # the remaining patches with a strong bias toward the smallest turn.
-            target_vec_xy = candidate_targets[:, :, :2] - self.robot.data.root_pos_w[env_ids, None, :2]
-            target_dist = torch.linalg.vector_norm(target_vec_xy, dim=-1)
+            if self.cfg.prefer_forward_targets:
+                # Prefer forward targets when possible; fall back to the least-turning target.
+                target_vec_xy = candidate_targets[:, :, :2] - self.robot.data.root_pos_w[patch_env_ids, None, :2]
+                target_dist = torch.linalg.vector_norm(target_vec_xy, dim=-1)
+                heading = self.robot.data.heading_w[patch_env_ids]
+                forward_w = torch.stack((torch.cos(heading), torch.sin(heading)), dim=-1)
+                heading_alignment = torch.sum(target_vec_xy * forward_w[:, None, :], dim=-1) / target_dist.clamp_min(
+                    1.0e-6
+                )
 
-            heading = self.robot.data.heading_w[env_ids]
-            forward_w = torch.stack((torch.cos(heading), torch.sin(heading)), dim=-1)
-            heading_alignment = torch.sum(target_vec_xy * forward_w[:, None, :], dim=-1) / target_dist.clamp_min(
-                1.0e-6
-            )
+                min_target_distance = max(self.cfg.target_min_distance, self.cfg.target_dis_threshold)
+                distant_mask = target_dist > min_target_distance
+                has_distant_target = distant_mask.any(dim=1, keepdim=True)
+                eligible_mask = torch.where(has_distant_target, distant_mask, torch.ones_like(distant_mask))
+                front_cone_cos = torch.cos(
+                    torch.tensor(self.cfg.target_front_cone_half_angle, dtype=heading_alignment.dtype, device=self.device)
+                )
+                front_mask = eligible_mask & (heading_alignment >= front_cone_cos)
+                has_front_target = front_mask.any(dim=1, keepdim=True)
+                masked_alignment = heading_alignment.masked_fill(~eligible_mask, -torch.inf)
+                best_alignment = masked_alignment.max(dim=1, keepdim=True).values
+                heading_weights = torch.exp(self.cfg.target_heading_bias * (heading_alignment - best_alignment))
+                heading_weights *= eligible_mask
+                target_weights = torch.where(has_front_target, heading_weights * front_mask, heading_weights)
+                ids = torch.multinomial(target_weights, num_samples=1).squeeze(1)
+            else:
+                ids = torch.randint(0, candidate_targets.shape[1], size=(len(patch_env_ids),), device=self.device)
 
-            min_target_distance = max(self.cfg.target_min_distance, self.cfg.target_dis_threshold)
-            distant_mask = target_dist > min_target_distance
-            has_distant_target = distant_mask.any(dim=1, keepdim=True)
-            eligible_mask = torch.where(has_distant_target, distant_mask, torch.ones_like(distant_mask))
-
-            front_cone_cos = torch.cos(
-                torch.tensor(self.cfg.target_front_cone_half_angle, dtype=heading_alignment.dtype, device=self.device)
-            )
-            front_mask = eligible_mask & (heading_alignment >= front_cone_cos)
-            has_front_target = front_mask.any(dim=1, keepdim=True)
-
-            # Subtract the row maximum before exponentiation for numerical stability.
-            masked_alignment = heading_alignment.masked_fill(~eligible_mask, -torch.inf)
-            best_alignment = masked_alignment.max(dim=1, keepdim=True).values
-            heading_weights = torch.exp(self.cfg.target_heading_bias * (heading_alignment - best_alignment))
-            heading_weights *= eligible_mask
-
-            # Do not select a rear/side target when a valid forward target exists.
-            front_weights = heading_weights * front_mask
-            target_weights = torch.where(has_front_target, front_weights, heading_weights)
-            ids = torch.multinomial(target_weights, num_samples=1).squeeze(1)
-        else:
-            ids = torch.randint(0, candidate_targets.shape[1], size=(len(env_ids),), device=self.device)
-
-        batch_ids = torch.arange(len(env_ids), device=self.device)
-        self.pos_command_w[env_ids] = candidate_targets[batch_ids, ids]
+            batch_ids = torch.arange(len(patch_env_ids), device=self.device)
+            self.pos_command_w[patch_env_ids] = candidate_targets[batch_ids, ids]
 
         # sample velocity commands
         r = torch.empty(len(env_ids), device=self.device)
@@ -243,35 +245,25 @@ class PoseVelocityCommand(CommandTerm):
         # update standing envs
         self.is_standing_env[env_ids] = r.uniform_(0.0, 1.0) <= self.cfg.rel_standing_envs
 
-        # Only update random velocities for envs that are currently being resampled AND are marked for random velocity
-        # Create a mask for the current batch of env_ids
-        current_batch_mask = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        current_batch_mask[env_ids] = True
-
-        # Find intersection: envs in this batch that are also random velocity envs
-        update_mask = current_batch_mask & self.random_velocity_indices
-        random_velocity_env_ids = update_mask.nonzero(as_tuple=False).flatten()
-
-        if len(random_velocity_env_ids) > 0:
-            self.random_lin_vel_x[random_velocity_env_ids] = self.random_lin_vel_x_range[
-                random_velocity_env_ids, 0
-            ] + torch.rand(len(random_velocity_env_ids), device=self.device) * (
-                self.random_lin_vel_x_range[random_velocity_env_ids, 1]
-                - self.random_lin_vel_x_range[random_velocity_env_ids, 0]
+        if random_env_ids.numel() > 0:
+            self.random_lin_vel_x[random_env_ids] = self.random_lin_vel_x_range[
+                random_env_ids, 0
+            ] + torch.rand(len(random_env_ids), device=self.device) * (
+                self.random_lin_vel_x_range[random_env_ids, 1]
+                - self.random_lin_vel_x_range[random_env_ids, 0]
             )
-            self.random_lin_vel_y[random_velocity_env_ids] = self.random_lin_vel_y_range[
-                random_velocity_env_ids, 0
-            ] + torch.rand(len(random_velocity_env_ids), device=self.device) * (
-                self.random_lin_vel_y_range[random_velocity_env_ids, 1]
-                - self.random_lin_vel_y_range[random_velocity_env_ids, 0]
+            self.random_lin_vel_y[random_env_ids] = self.random_lin_vel_y_range[
+                random_env_ids, 0
+            ] + torch.rand(len(random_env_ids), device=self.device) * (
+                self.random_lin_vel_y_range[random_env_ids, 1]
+                - self.random_lin_vel_y_range[random_env_ids, 0]
             )
-            self.random_ang_vel_z[random_velocity_env_ids] = self.random_ang_vel_z_range[
-                random_velocity_env_ids, 0
-            ] + torch.rand(len(random_velocity_env_ids), device=self.device) * (
-                self.random_ang_vel_z_range[random_velocity_env_ids, 1]
-                - self.random_ang_vel_z_range[random_velocity_env_ids, 0]
+            self.random_ang_vel_z[random_env_ids] = self.random_ang_vel_z_range[
+                random_env_ids, 0
+            ] + torch.rand(len(random_env_ids), device=self.device) * (
+                self.random_ang_vel_z_range[random_env_ids, 1]
+                - self.random_ang_vel_z_range[random_env_ids, 0]
             )
-            self.random_ang_vel_z *= torch.abs(self.random_ang_vel_z) > 0.5
 
     def _update_command(self):
         """Re-target the position command to the current root state."""
@@ -333,13 +325,12 @@ class PoseVelocityCommand(CommandTerm):
         self.vel_command_b[:] *= (target_dist > self.cfg.target_dis_threshold).unsqueeze(-1)
         self.vel_command_b[:, :2] *= ((torch.norm(self.vel_command_b[:, :2], dim=1) > self.cfg.lin_vel_threshold).float().unsqueeze(-1))
         self.vel_command_b[:, 2] *= (torch.abs(self.vel_command_b[:, 2]) > self.cfg.ang_vel_threshold).float()
-        standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
-        self.vel_command_b[standing_env_ids, :] = 0.0
-
         random_velocity_env_ids = self.random_velocity_indices.nonzero(as_tuple=False).flatten()
         self.vel_command_b[random_velocity_env_ids, 0] = self.random_lin_vel_x[random_velocity_env_ids]
         self.vel_command_b[random_velocity_env_ids, 1] = self.random_lin_vel_y[random_velocity_env_ids]
         self.vel_command_b[random_velocity_env_ids, 2] = self.random_ang_vel_z[random_velocity_env_ids]
+        standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
+        self.vel_command_b[standing_env_ids, :] = 0.0
 
         # debug
         DEBUG = False
@@ -382,15 +373,18 @@ class PoseVelocityCommand(CommandTerm):
     def _debug_vis_callback(self, event):
         if not self.robot.is_initialized:
             return
+        # Random-velocity terrains intentionally have no flat-patch targets.
+        patch_env_ids = self.patch_env_ids
         if getattr(self.cfg, "patch_vis", True):
-            flat_patches = self.valid_targets.reshape(-1, 3)
-            poses = torch.cat([self.pos_command_w, flat_patches], dim=0)
+            flat_patches = self.valid_targets[:, self.patch_terrain_types].reshape(-1, 3)
+            command_targets = self.pos_command_w[patch_env_ids]
+            poses = torch.cat([command_targets, flat_patches], dim=0)
+        else:
+            poses = self.pos_command_w[patch_env_ids]
+        if poses.shape[0] > 0:
             # A single configured prototype means every instance must use index 0.
             marker_indices = torch.zeros(poses.shape[0], dtype=torch.int, device=self.device)
             self.flat_patch_visualizer.visualize(poses, marker_indices=marker_indices)
-        else:
-            marker_indices = torch.zeros(self.num_envs, dtype=torch.int, device=self.device)
-            self.flat_patch_visualizer.visualize(self.pos_command_w, marker_indices=marker_indices)
         # get marker location
         # -- base state
         base_pos_w = self.robot.data.root_pos_w.clone()

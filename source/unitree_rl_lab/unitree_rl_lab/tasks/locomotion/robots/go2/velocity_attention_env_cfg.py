@@ -161,11 +161,11 @@ class CommandsCfg:
         heading_control_stiffness=2.0,
         rel_standing_envs=0.05, # 5%的环境站立
         ranges=PoseVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.0),
+            lin_vel_x=(0.0, 1.0),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-1.0, 1.0),
         ),
-        random_velocity_terrain=[],
+        random_velocity_terrain=["random_rough", "boxes"],
         # Sample from the four cardinal border groups, biased toward the current heading.
         target_patch_names=(
             "target_center",

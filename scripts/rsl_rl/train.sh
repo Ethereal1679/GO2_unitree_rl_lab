@@ -34,9 +34,9 @@ python "${SCRIPT_DIR}/py/train.py" \
     --task g1_lidar \
     --logger tensorboard \
     --num_envs 2048 \
-    --run_name "add_stair-alive:3.0" \
+    --run_name "rm_stair_penalty-add_terrain_plane_alive:2.0" \
     --max_iterations 99999999 \
     --headless \
-    --resume \
-    --load_run 2026-10-17_18-51-44_add_stair \
+    # --resume \
+    # --load_run 2026-10-17_18-51-44_add_stair \
 

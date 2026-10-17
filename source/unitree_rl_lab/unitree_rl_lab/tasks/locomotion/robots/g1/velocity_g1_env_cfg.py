@@ -162,26 +162,19 @@ class CommandsCfg:
         heading_control_stiffness=2.0,
         rel_standing_envs=0.05, # 5%的环境站立
         ranges=PoseVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.0),
+            lin_vel_x=(0.0, 1.0),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-1.0, 1.0),
         ),
-        random_velocity_terrain=[],
+        random_velocity_terrain=["random_rough", "boxes"],
         # Sample from the four cardinal border groups, biased toward the current heading.
-        target_patch_names=(
-            "target_center",
-            "target_pos_x",
-            "target_neg_x",
-            "target_pos_y",
-            "target_neg_y",
-        ),
+        target_patch_names=("target_center", "target_pos_x", "target_neg_x", "target_pos_y", "target_neg_y",),
         # 按照锥形扫描选择前方的patch，尽量减少选择后方的patch
         prefer_forward_targets=False,
         target_front_cone_half_angle=math.radians(60.0),
         target_min_distance=1.0,
         target_heading_bias=4.0,
-        # 随机clamp速度上限，不代表真实速度
-        # NOTE 这里都是速度上限随机化，不存在负数
+        # 随机clamp速度上限，不代表真实速度 NOTE 这里都是速度上限随机化，不存在负数
         velocity_ranges={
             "pyramid_stairs": {
                 "lin_vel_x": (0.45, 1.0),
@@ -209,8 +202,8 @@ class CommandsCfg:
                 "ang_vel_z": (-1.0, 1.0),
             },
         },
-        # 最好是正向速度，避免负向速度导致的机器人后退
-        only_positive_lin_vel_x=True,
+
+        only_positive_lin_vel_x=True, # 最好是正向速度，避免负向速度导致的机器人后退
         lin_vel_threshold=0.0,
         ang_vel_threshold=0.0,
         target_dis_threshold=0.4,
@@ -318,7 +311,7 @@ class RewardsCfg:
 
 
     # -- basic
-    alive = RewTerm(func=mdp.is_alive, weight=3.0)
+    alive = RewTerm(func=mdp.is_alive, weight=2.0)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
@@ -353,7 +346,7 @@ class RewardsCfg:
     # -- gas gap
     gap_penetration = RewTerm(func=mdp.GapPenetrationPlanePenalty, weight=-5.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*(foot_hook0|foot_hook1|foot_hook2)"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_(foot_hook0|foot_hook1|foot_hook2)"),
             "min_depth": 0.00, "max_depth": 2.0, 
             "depth_scale": 0.5, "duration_scale": 0.5,
             "sub_terrain_size": COMPLEX_RANDOM_CFG.size,
@@ -449,4 +442,3 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.events.base_external_force_torque = None
         # self.terminations.base_contact = None
         self.terminations.time_out = None
-
