@@ -7,6 +7,35 @@ from typing import Any
 import torch
 
 
+def _report_nonfinite_height_map(height_map: torch.Tensor, context: str) -> None:
+    """Print useful diagnostics when a height scan contains NaN or Inf values."""
+
+    finite = torch.isfinite(height_map)
+    if bool(finite.all()):
+        return
+
+    # The first dimension is always the environment dimension. Keep the
+    # diagnostic compact enough to be useful when many environments fail.
+    bad_by_env = ~finite.flatten(start_dim=1).all(dim=1)
+    bad_env_ids = torch.nonzero(bad_by_env, as_tuple=False).flatten()
+    bad_counts = (~finite).flatten(start_dim=1).sum(dim=1)
+    finite_values = height_map[finite]
+    if finite_values.numel() > 0:
+        finite_range = (
+            float(finite_values.min().detach().cpu()),
+            float(finite_values.max().detach().cpu()),
+        )
+    else:
+        finite_range = None
+    print(
+        f"[HEIGHT_SCAN][{context}] non-finite height values detected: "
+        f"env_ids={bad_env_ids.detach().cpu().tolist()}, "
+        f"bad_counts={bad_counts[bad_by_env].detach().cpu().tolist()}, "
+        f"finite_range={finite_range}",
+        flush=True,
+    )
+
+
 def _yaw_from_quat(quat_w: torch.Tensor) -> torch.Tensor:
     """Extract yaw from Isaac Lab's scalar-first (w, x, y, z) quaternions."""
 
@@ -145,6 +174,7 @@ class HeightScanGradient:
         quat_w = data.quat_w.detach()
         if hits_w.ndim != 3 or hits_w.shape[-1] != 3:
             raise ValueError(f"Expected ray hits shaped (N, R, 3), got {tuple(hits_w.shape)}")
+        _report_nonfinite_height_map(hits_w[..., 2], "temporal")
         if pos_w.shape != (hits_w.shape[0], 3) or quat_w.shape != (hits_w.shape[0], 4):
             raise ValueError("RayCaster poses do not match the number of ray-hit batches.")
 
@@ -349,6 +379,7 @@ def height_scan_spacial_gradient(
     # Isaac Lab ordering='yx' 时，reshape(nx, ny) 的行对应 x，列对应 y。
     raw_shape = (nx, ny) if ordering == "yx" else (ny, nx)
     heights = hits_w[..., 2].reshape(hits_w.shape[0], *raw_shape)
+    _report_nonfinite_height_map(heights, "spatial")
     valid = torch.isfinite(hits_w).all(dim=-1).reshape(hits_w.shape[0], *raw_shape)
     if ordering == "xy":
         heights = heights.transpose(1, 2)

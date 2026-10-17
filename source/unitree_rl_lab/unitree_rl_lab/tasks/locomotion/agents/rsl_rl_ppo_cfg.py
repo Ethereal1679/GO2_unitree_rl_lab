@@ -48,6 +48,10 @@ class RslRlPpoActorCriticGradCNNCfg(RslRlPpoActorCriticCfg):
     # beta-VAE KL weight. Keep this explicit in the runner config so it is
     # visible and tunable instead of relying on the model constructor default.
     vae_beta: float = 1.0e-3
+    action_scale: float = 0.25
+    default_joint_pos: list[float] | None = None
+    joint_pos_lower_limits: list[float] | None = None
+    joint_pos_upper_limits: list[float] | None = None
 
 
 @configclass
@@ -184,6 +188,29 @@ class G1GradCNNRunnerCfg(BasePPORunnerCfg):
         cnn_channels=[32, 64, 128],
         reconstruction_loss_coef=1.0,
         vae_beta=1.0e-3,
+        action_scale=0.25,
+        # Joint order matches the G1 URDF articulation order used by the action term.
+        default_joint_pos=[
+            -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,
+            -0.312, 0.0, 0.0, 0.669, -0.363, 0.0,
+            0.0,
+            0.2, 0.2, 0.0, 0.6, 0.0,
+            0.2, -0.2, 0.0, 0.6, 0.0,
+        ],
+        joint_pos_lower_limits=[
+            -2.5307, -0.5236, -2.7576, -0.087267, -0.87267, -0.2618,
+            -2.5307, -2.9671, -2.7576, -0.087267, -0.87267, -0.2618,
+            -2.618,
+            -3.0892, -1.5882, -2.618, -1.0472, -1.972222054,
+            -3.0892, -2.2515, -2.618, -1.0472, -1.972222054,
+        ],
+        joint_pos_upper_limits=[
+            2.8798, 2.9671, 2.7576, 2.8798, 0.5236, 0.2618,
+            2.8798, 0.5236, 2.7576, 2.8798, 0.5236, 0.2618,
+            2.618,
+            2.6704, 2.2515, 2.618, 2.0944, 1.972222054,
+            2.6704, 1.5882, 2.618, 2.0944, 1.972222054,
+        ],
     )
 
 

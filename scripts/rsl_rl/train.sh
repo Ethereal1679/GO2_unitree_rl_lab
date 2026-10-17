@@ -34,9 +34,9 @@ python "${SCRIPT_DIR}/py/train.py" \
     --task g1_lidar \
     --logger tensorboard \
     --num_envs 2048 \
-    --run_name "g1_grad_VAE-remake-holes_depth:0.2-track_lin_vel_xy:2.5-track_ang_vel_z:2.0-alive:1.0-train_spacial" \
+    --run_name "g1_grad_VAE-spatial_grad-reward_gas_penalty:-10.0-lin_hook0-pillar_box" \
     --max_iterations 99999999 \
     --headless \
-    # --resume \
-    # --load_run 2026-10-11_14-35-30_cnn-vae \
+    --resume \
+    --load_run 2026-10-16_05-12-15_g1_grad_VAE-spatial_grad-reward_gas_penalty:-10.0-lin_hook0-pillar_box \
 

@@ -338,10 +338,11 @@ class RewardsCfg:
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
     joint_position_penalty = RewTerm(func=mdp.joint_position_penalty, weight=-0.5, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*"),"stand_still_scale": 5.0,"velocity_threshold": 0.3,},)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts,weight=-1.0,params={"threshold": 1,"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["(?!.*ankle.*).*"]),},)
-    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-5.0,
+    gap_penetration = RewTerm(func=mdp.GapPenetrationPenalty, weight=-10.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*"),
-            "min_depth": 0.02, "max_depth": 2.0, "depth_scale": 0.40, "duration_scale": 0.50,
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot_hook0"),
+            "min_depth": 0.02, "max_depth": 2.0, 
+            "depth_scale": 0.5, "duration_scale": 0.5,
             "sub_terrain_size": COMPLEX_RANDOM_CFG.size,
             "plane_z": -0.07, "plane_thickness": 0.02,
         },

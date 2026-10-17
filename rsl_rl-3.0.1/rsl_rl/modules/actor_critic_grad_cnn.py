@@ -256,6 +256,10 @@ class ActorCriticGradCNN(nn.Module):
         cnn_channels=(32, 64, 128),
         reconstruction_loss_coef: float = 1.0,
         vae_beta: float = 1.0e-3,
+        action_scale: float | Sequence[float] = 0.25,
+        default_joint_pos: Sequence[float] | None = None,
+        joint_pos_lower_limits: Sequence[float] | None = None,
+        joint_pos_upper_limits: Sequence[float] | None = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -316,6 +320,20 @@ class ActorCriticGradCNN(nn.Module):
             self.log_std = nn.Parameter(torch.log(init_noise_std * torch.ones(num_actions)))
         else:
             raise ValueError(f"Unknown standard deviation type: {noise_std_type}.")
+
+        joint_config = (default_joint_pos, joint_pos_lower_limits, joint_pos_upper_limits)
+        if any(value is not None for value in joint_config):
+            if any(value is None for value in joint_config):
+                raise ValueError("Default joint positions and both joint limit arrays must be provided together.")
+            self.register_buffer("action_scale", torch.as_tensor(action_scale, dtype=torch.float32), persistent=False)
+            self.register_buffer("default_joint_pos", torch.as_tensor(default_joint_pos, dtype=torch.float32), persistent=False)
+            self.register_buffer("joint_pos_lower_limits",torch.as_tensor(joint_pos_lower_limits, dtype=torch.float32),persistent=False,)
+            self.register_buffer("joint_pos_upper_limits",torch.as_tensor(joint_pos_upper_limits, dtype=torch.float32),persistent=False,)
+        else:
+            self.action_scale = None
+            self.default_joint_pos = None
+            self.joint_pos_lower_limits = None
+            self.joint_pos_upper_limits = None
         self.distribution = None
         Normal.set_default_validate_args(False)
 
@@ -382,6 +400,16 @@ class ActorCriticGradCNN(nn.Module):
             std = self.std.expand_as(mean)
         else:
             std = torch.exp(self.log_std).expand_as(mean)
+        # 根据关节位置限制裁剪高斯策略的动作均值
+        if self.action_scale is not None and self.default_joint_pos is not None and self.joint_pos_lower_limits is not None and self.joint_pos_upper_limits is not None:
+            lim_max = (self.joint_pos_upper_limits - self.default_joint_pos) / self.action_scale
+            lim_min = (self.joint_pos_lower_limits - self.default_joint_pos) / self.action_scale
+            mean = torch.clamp(mean, min=lim_min, max=lim_max,) 
+
+        # if not torch.isfinite(mean).all():
+        #     raise FloatingPointError("Actor mean contains NaN/Inf")
+        # if not torch.isfinite(std).all() or (std <= 0).any():
+        #     raise FloatingPointError(f"Invalid action std: {std}")
         self.distribution = Normal(mean, std)
 
     def act(self, obs, **kwargs):
