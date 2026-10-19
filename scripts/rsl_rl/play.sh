@@ -20,8 +20,8 @@ export HEADLESS=0
 # --gap_gas_enable_viz \
 python "${SCRIPT_DIR}/py/play.py" \
     --task g1_lidar \
-    --num_envs 64 \
-    --load_run 2026-10-17_18-51-44_add_stair \
+    --num_envs 128 \
+    --load_run 2026-10-18_03-35-24_rm_stair_penalty-add_terrain_plane_alive:2.0 \
     --gap_gas_enable_viz \
     # --grad_cnn_map_viz \
     # --height_scan_gradient_viz

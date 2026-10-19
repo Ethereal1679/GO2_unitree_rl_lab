@@ -156,7 +156,7 @@ class CommandsCfg:
 
     base_velocity = PoseVelocityCommandCfg(
         asset_name="robot",
-        resampling_time_range=(8.0, 12.0),
+        resampling_time_range=(12.0, 12.0),
         debug_vis=False,
         velocity_control_stiffness=2.0,
         heading_control_stiffness=2.0,
@@ -305,8 +305,8 @@ class RewardsCfg:
     """Reward terms for the MDP."""
 
     # -- task
-    track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
-    track_ang_vel_z = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=2.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
+    track_lin_vel_xy = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=3.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
+    track_ang_vel_z = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=2.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)})
     heading_error = RewTerm(func=mdp.heading_error, weight=-2.0,) # 如果target生成在后方，机器人会学会原地转弯利用vel的正向clamp来始终追踪小速度奖励
 
 
@@ -382,6 +382,22 @@ class CurriculumCfg:
     terrain_levels = CurrTerm(func=mdp.terrain_levels_tracking_exp_vel, params={"lin_vel_threshold": (0.3, 0.6), "ang_vel_threshold": (0.1, 0.3)})
     # terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
     # lin_vel_cmd_levels = CurrTerm(mdp.lin_vel_cmd_levels)
+    progressive_terrain = CurrTerm(
+        func=mdp.progressive_terrain_env_allocation,
+        params={
+            "terrain_groups": (
+                ("hf_gaps", "hf_steppingstones", "hf_i_bridge"),
+                ("pyramid_stairs", "pyramid_stairs_inv"),
+                ("random_rough", "boxes"),
+            ),
+            "level_threshold": 0.8,
+            "check_interval_iterations": 2000,
+            # Keep in sync with G1GradCNNRunnerCfg.num_steps_per_env.
+            "steps_per_iteration": 24,
+            "release_fraction": 0.2,
+            "min_remaining_fraction": 0.5,
+        },
+    )
 
 
 @configclass
@@ -431,6 +447,7 @@ class RobotPlayEnvCfg(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 32
+        self.curriculum.progressive_terrain = None
         self.scene.terrain.terrain_generator.num_rows = 10
         self.scene.terrain.terrain_generator.num_cols = max(5, len(self.scene.terrain.terrain_generator.sub_terrains))
         # self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges

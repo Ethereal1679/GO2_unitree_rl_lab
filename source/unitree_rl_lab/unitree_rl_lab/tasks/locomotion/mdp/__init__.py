@@ -12,3 +12,4 @@ from ..height_scan.height_scan_grad import (  # noqa: F401
     height_scan_temporal_gradient,
 )
 from unitree_rl_lab.tasks.locomotion.terrains.penalty_gap_gas import *  # noqa: F401, F403
+from unitree_rl_lab.tasks.locomotion.terrains.progressive_curriculum import *  # noqa: F401, F403
